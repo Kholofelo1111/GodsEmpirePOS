@@ -1,6 +1,7 @@
 "use client";
 
 import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning";
+import { Capacitor } from "@capacitor/core";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   Plus,
@@ -245,11 +246,16 @@ export default function POSPage() {
   const startScanner = async () => {
     try {
       setScannerError("");
+      if (!Capacitor.isNativePlatform()) {
+        window.location.href = "/scanner?return=pos";
+        return;
+      }
       const { available } = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable();
       if (!available) {
         await BarcodeScanner.installGoogleBarcodeScannerModule();
         await new Promise<void>((resolve) => {
           BarcodeScanner.addListener("googleBarcodeScannerModuleInstallProgress", (event) => {
+            if (event.state === 4) resolve();
           });
         });
       }

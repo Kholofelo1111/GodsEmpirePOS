@@ -1,0 +1,707 @@
+"use client";
+
+import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import {
+  Plus,
+  Minus,
+  Trash2,
+  CreditCard,
+  Banknote,
+  ShoppingBag,
+  CheckCircle,
+  UserPlus,
+  Printer,
+  Camera,
+} from "lucide-react";
+import SearchInput from "@/components/ui/SearchInput";
+import Modal from "@/components/ui/Modal";
+import EmptyState from "@/components/ui/EmptyState";
+import Spinner from "@/components/ui/Spinner";
+import { Field, inputClass, selectClass } from "@/components/ui/Field";
+import { money } from "@/lib/format";
+import type { BusinessInfo } from "@/lib/queries";
+
+interface Product {
+  id: number;
+  name: string;
+  barcode: string | null;
+  sellingPrice: string;
+  stock: number;
+  categoryId: number | null;
+  categoryName: string | null;
+  imageUrl: string | null;
+}
+
+interface CartItem {
+  id: number;
+  name: string;
+  price: number;
+  quantity: number;
+  stock: number;
+}
+
+interface CompletedSale {
+  receiptNumber: string;
+  items: CartItem[];
+  subtotal: number;
+  vat: number;
+  discount: number;
+  total: number;
+  paid: number;
+  change: number;
+  method: string;
+  at: string;
+}
+
+export default function POSPage() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<{ id: number; name: string }[]>([]);
+  const [customers, setCustomers] = useState<{ id: number; name: string }[]>([]);
+  const [business, setBusiness] = useState<BusinessInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const [search, setSearch] = useState("");
+  const [activeCategory, setActiveCategory] = useState<number | "all">("all");
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [discount, setDiscount] = useState("");
+  const [includeVAT, setIncludeVAT] = useState(true);
+  const [customerId, setCustomerId] = useState("");
+
+  const [showPayment, setShowPayment] = useState(false);
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card">("cash");
+  const [amountTendered, setAmountTendered] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const [error, setError] = useState("");
+  const [completed, setCompleted] = useState<CompletedSale | null>(null);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scannerError, setScannerError] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const loadData = useCallback(async () => {
+    try {
+      const [p, c, cu, s] = await Promise.all([
+        fetch("/api/products").then((r) => r.json()),
+        fetch("/api/categories").then((r) => r.json()),
+        fetch("/api/customers").then((r) => r.json()),
+        fetch("/api/settings").then((r) => r.json()),
+      ]);
+      setProducts(Array.isArray(p) ? p : []);
+      setCategories(Array.isArray(c) ? c : []);
+      setCustomers(Array.isArray(cu) ? cu : []);
+      setBusiness(s);
+    } catch {
+      setError("Could not load products. Check your connection.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+
+  const vatRate = business?.vatRate ?? 15;
+
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return products.filter((p) => {
+      const matchesCat = activeCategory === "all" || p.categoryId === activeCategory;
+      const matchesTerm =
+        !term || p.name.toLowerCase().includes(term) || (p.barcode ?? "").includes(term);
+      return matchesCat && matchesTerm;
+    });
+  }, [products, search, activeCategory]);
+
+  const addToCart = (product: Product) => {
+    if (product.stock <= 0) return;
+    setCart((prev) => {
+      const existing = prev.find((i) => i.id === product.id);
+      if (existing) {
+        if (existing.quantity >= product.stock) return prev;
+        return prev.map((i) => (i.id === product.id ? { ...i, quantity: i.quantity + 1 } : i));
+      }
+      return [
+        ...prev,
+        {
+          id: product.id,
+          name: product.name,
+          price: Number(product.sellingPrice),
+          quantity: 1,
+          stock: product.stock,
+        },
+      ];
+    });
+  };
+
+  useEffect(() => {
+    const barcode = new URLSearchParams(window.location.search).get("barcode");
+    if (!barcode || products.length === 0) return;
+
+    const product = products.find((p) => p.barcode === barcode);
+    if (!product) return;
+
+    addToCart(product);
+    window.history.replaceState({}, "", "/pos");
+  }, [products]);
+
+
+
+  // Scanning a full barcode into the search box adds the item straight to the cart.
+  useEffect(() => {
+    const term = search.trim();
+    if (term.length < 8) return;
+    const exact = products.find((p) => p.barcode === term);
+    if (exact) {
+      addToCart(exact);
+      setSearch("");
+    }
+  }, [search, products]);
+
+  const updateQty = (id: number, delta: number) => {
+    setCart((prev) =>
+      prev.flatMap((item) => {
+        if (item.id !== id) return [item];
+        const next = item.quantity + delta;
+        if (next <= 0) return [];
+        if (next > item.stock) return [item];
+        return [{ ...item, quantity: next }];
+      })
+    );
+  };
+
+  const removeItem = (id: number) => setCart((prev) => prev.filter((i) => i.id !== id));
+
+  const subtotal = cart.reduce((sum, i) => sum + i.price * i.quantity, 0);
+  const discountValue = Math.min(Number(discount || 0), subtotal);
+  const taxable = subtotal - discountValue;
+  const vatAmount = includeVAT ? taxable * (vatRate / 100) : 0;
+  const total = taxable + vatAmount;
+  const tendered = Number(amountTendered || 0);
+  const change = Math.max(0, tendered - total);
+  const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0);
+
+  const checkout = async () => {
+    if (cart.length === 0) return;
+    setProcessing(true);
+    setError("");
+
+    try {
+      const res = await fetch("/api/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          items: cart.map((i) => ({
+            productId: i.id,
+            quantity: i.quantity,
+            unitPrice: i.price,
+            totalPrice: i.price * i.quantity,
+          })),
+          discount: discountValue,
+          vatAmount,
+          total,
+          paymentMethod,
+          amountTendered: paymentMethod === "cash" ? tendered : total,
+          changeGiven: paymentMethod === "cash" ? change : 0,
+          customerId: customerId ? Number(customerId) : null,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Sale failed");
+      }
+
+      const sale = await res.json();
+      setCompleted({
+        receiptNumber: sale.receiptNumber,
+        items: cart,
+        subtotal,
+        vat: vatAmount,
+        discount: discountValue,
+        total,
+        paid: paymentMethod === "cash" ? tendered : total,
+        change: paymentMethod === "cash" ? change : 0,
+        method: paymentMethod,
+        at: new Date().toLocaleString("en-ZA"),
+      });
+
+      setCart([]);
+      setDiscount("");
+      setAmountTendered("");
+      setCustomerId("");
+      setShowPayment(false);
+      loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sale failed");
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+
+  const startScanner = async () => {
+    try {
+      setScannerError("");
+      const { available } = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable();
+      if (!available) {
+        await BarcodeScanner.installGoogleBarcodeScannerModule();
+        await new Promise<void>((resolve) => {
+          BarcodeScanner.addListener("googleBarcodeScannerModuleInstallProgress", (event) => {
+          });
+        });
+      }
+      const { barcodes } = await BarcodeScanner.scan();
+      if (!barcodes.length) return;
+      const code = barcodes[0].rawValue ?? "";
+      if (!code) return;
+      const product = products.find((p) => p.barcode === code);
+      if (product) {
+        addToCart(product);
+      } else {
+        setSearch(code);
+      }
+    } catch (e) {
+      console.error(e);
+      setScannerError("Scanning cancelled or failed.");
+    }
+  };
+  const stopScanner = () => {
+    setScanning(false);
+    setShowScanner(false);
+  };
+
+  if (loading) return <Spinner label="Loading till..." />;
+
+  return (
+    <div className="animate-fadeIn flex flex-col lg:flex-row gap-4 lg:h-[calc(100vh-8rem)]">
+      {/* Catalogue */}
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="space-y-3 mb-4">
+          <button
+            onClick={startScanner}
+            className="flex items-center justify-center gap-2 w-full py-3 mb-3 gold-gradient text-dark-950 font-semibold rounded-xl"
+          >
+            <Camera className="w-5 h-5" />
+            Scan Barcode
+          </button>
+
+          <SearchInput
+            value={search}
+            onChange={setSearch}
+            placeholder="Search or scan barcode..."
+          />
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            <button
+              onClick={() => setActiveCategory("all")}
+              className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${
+                activeCategory === "all"
+                  ? "gold-gradient text-dark-950"
+                  : "bg-dark-800 text-dark-300 hover:text-white"
+              }`}
+            >
+              All
+            </button>
+            {categories.map((cat) => (
+              <button
+                key={cat.id}
+                onClick={() => setActiveCategory(cat.id)}
+                className={`px-4 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${
+                  activeCategory === cat.id
+                    ? "gold-gradient text-dark-950"
+                    : "bg-dark-800 text-dark-300 hover:text-white"
+                }`}
+              >
+                {cat.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex-1 lg:overflow-y-auto">
+          {filtered.length === 0 ? (
+            <EmptyState
+              icon={<ShoppingBag className="w-6 h-6 text-dark-500" />}
+              title="No products found"
+              message="Try a different search term or category."
+            />
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3 content-start">
+              {filtered.map((product) => (
+                <button
+                  key={product.id}
+                  onClick={() => addToCart(product)}
+                  disabled={product.stock <= 0}
+                  className="glass-card rounded-xl p-3 text-left hover:border-gold-400/40 active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed group"
+                >
+                  <div className="w-full aspect-[4/3] bg-dark-800 rounded-lg mb-2.5 flex items-center justify-center overflow-hidden">
+                    {product.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={product.imageUrl} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <ShoppingBag className="w-7 h-7 text-dark-600 group-hover:text-gold-400 transition-colors" />
+                    )}
+                  </div>
+                  <p className="text-sm font-medium text-white line-clamp-2 leading-snug">
+                    {product.name}
+                  </p>
+                  <p className="text-gold-400 font-bold mt-1">{money(product.sellingPrice)}</p>
+                  <p
+                    className={`text-xs mt-0.5 ${
+                      product.stock <= 0 ? "text-red-400" : "text-dark-400"
+                    }`}
+                  >
+                    {product.stock <= 0 ? "Out of stock" : `${product.stock} in stock`}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Cart */}
+      <div className="w-full lg:w-96 glass-card rounded-2xl flex flex-col lg:max-h-full">
+        <div className="p-4 border-b border-dark-800 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Current Sale</h2>
+            <p className="text-xs text-dark-400">
+              {cartCount} item{cartCount === 1 ? "" : "s"}
+            </p>
+          </div>
+          {cart.length > 0 && (
+            <button
+              onClick={() => setCart([])}
+              className="text-xs text-dark-400 hover:text-red-400 transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-2 min-h-[160px] max-h-[38vh] lg:max-h-none">
+          {cart.length === 0 ? (
+            <EmptyState
+              icon={<ShoppingBag className="w-6 h-6 text-dark-500" />}
+              title="Cart is empty"
+              message="Tap a product to add it."
+            />
+          ) : (
+            cart.map((item) => (
+              <div key={item.id} className="bg-dark-900/60 rounded-xl p-3">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <p className="text-sm font-medium text-white leading-snug">{item.name}</p>
+                  <button
+                    onClick={() => removeItem(item.id)}
+                    className="text-dark-500 hover:text-red-400 transition-colors flex-shrink-0"
+                    aria-label="Remove"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => updateQty(item.id, -1)}
+                      className="w-8 h-8 rounded-lg bg-dark-700 flex items-center justify-center text-dark-200 hover:bg-dark-600 transition-colors"
+                    >
+                      <Minus className="w-4 h-4" />
+                    </button>
+                    <span className="text-sm font-semibold text-white w-7 text-center">
+                      {item.quantity}
+                    </span>
+                    <button
+                      onClick={() => updateQty(item.id, 1)}
+                      disabled={item.quantity >= item.stock}
+                      className="w-8 h-8 rounded-lg bg-dark-700 flex items-center justify-center text-dark-200 hover:bg-dark-600 transition-colors disabled:opacity-40"
+                    >
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <span className="text-sm font-semibold text-gold-400">
+                    {money(item.price * item.quantity)}
+                  </span>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="p-4 border-t border-dark-800 space-y-3">
+          <div className="flex items-center gap-2">
+            <UserPlus className="w-4 h-4 text-dark-400 flex-shrink-0" />
+            <select
+              value={customerId}
+              onChange={(e) => setCustomerId(e.target.value)}
+              className="flex-1 px-3 py-2 bg-dark-900 border border-dark-700 rounded-lg text-sm text-white focus:outline-none focus:border-gold-400"
+            >
+              <option value="">Walk-in customer</option>
+              {customers.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flex justify-between text-sm">
+            <span className="text-dark-400">Subtotal</span>
+            <span className="text-white">{money(subtotal)}</span>
+          </div>
+
+          <div className="flex justify-between items-center text-sm">
+            <span className="text-dark-400">Discount</span>
+            <input
+              type="number"
+              value={discount}
+              onChange={(e) => setDiscount(e.target.value)}
+              placeholder="0.00"
+              min="0"
+              step="0.01"
+              className="w-24 px-2 py-1 bg-dark-900 border border-dark-700 rounded-lg text-white text-right text-sm focus:outline-none focus:border-gold-400"
+            />
+          </div>
+
+          <label className="flex justify-between items-center text-sm cursor-pointer">
+            <span className="text-dark-400 flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={includeVAT}
+                onChange={(e) => setIncludeVAT(e.target.checked)}
+                className="rounded border-dark-600 bg-dark-800 accent-gold-400"
+              />
+              VAT ({vatRate}%)
+            </span>
+            <span className="text-white">{money(vatAmount)}</span>
+          </label>
+
+          <div className="flex justify-between items-center pt-3 border-t border-dark-700">
+            <span className="text-base font-semibold text-white">Total</span>
+            <span className="text-xl font-bold text-gold-400">{money(total)}</span>
+          </div>
+
+          <button
+            onClick={() => {
+              setAmountTendered("");
+              setShowPayment(true);
+            }}
+            disabled={cart.length === 0}
+            className="w-full py-3.5 gold-gradient text-dark-950 font-semibold rounded-xl hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            Charge {money(total)}
+          </button>
+        </div>
+      </div>
+
+      {/* Payment modal */}
+      <Modal open={showPayment} onClose={() => setShowPayment(false)} title="Take Payment">
+        <div className="text-center mb-5">
+          <p className="text-sm text-dark-400">Amount due</p>
+          <p className="text-4xl font-bold text-gold-400 mt-1">{money(total)}</p>
+        </div>
+
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 mb-4 text-red-400 text-sm">
+            {error}
+          </div>
+        )}
+
+        <div className="grid grid-cols-2 gap-3 mb-5">
+          <button
+            onClick={() => setPaymentMethod("cash")}
+            className={`p-4 rounded-xl border-2 transition-all ${
+              paymentMethod === "cash"
+                ? "border-gold-400 bg-gold-400/10"
+                : "border-dark-700 hover:border-dark-600"
+            }`}
+          >
+            <Banknote
+              className={`w-7 h-7 mx-auto mb-2 ${
+                paymentMethod === "cash" ? "text-gold-400" : "text-dark-400"
+              }`}
+            />
+            <p className="text-sm font-medium text-white">Cash</p>
+          </button>
+          <button
+            onClick={() => setPaymentMethod("card")}
+            className={`p-4 rounded-xl border-2 transition-all ${
+              paymentMethod === "card"
+                ? "border-gold-400 bg-gold-400/10"
+                : "border-dark-700 hover:border-dark-600"
+            }`}
+          >
+            <CreditCard
+              className={`w-7 h-7 mx-auto mb-2 ${
+                paymentMethod === "card" ? "text-gold-400" : "text-dark-400"
+              }`}
+            />
+            <p className="text-sm font-medium text-white">Card</p>
+          </button>
+        </div>
+
+        {paymentMethod === "cash" && (
+          <div className="mb-5 space-y-3">
+            <Field label="Amount tendered">
+              <input
+                type="number"
+                value={amountTendered}
+                onChange={(e) => setAmountTendered(e.target.value)}
+                className={inputClass}
+                placeholder="0.00"
+                step="0.01"
+                min={0}
+                autoFocus
+              />
+            </Field>
+
+            <div className="flex gap-2 flex-wrap">
+              {[total, 50, 100, 200, 500].map((amt, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setAmountTendered(String(Math.max(amt, idx === 0 ? amt : 0)))}
+                  className="px-3 py-1.5 rounded-lg bg-dark-800 text-dark-200 text-xs font-medium hover:bg-dark-700 transition-colors"
+                >
+                  {idx === 0 ? "Exact" : money(amt)}
+                </button>
+              ))}
+            </div>
+
+            {tendered >= total && tendered > 0 && (
+              <div className="p-3 bg-green-400/10 border border-green-400/20 rounded-xl flex items-center justify-between">
+                <span className="text-sm text-dark-200">Change due</span>
+                <span className="text-2xl font-bold text-green-400">{money(change)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <button
+          onClick={checkout}
+          disabled={processing || (paymentMethod === "cash" && tendered < total)}
+          className="w-full py-3.5 gold-gradient text-dark-950 font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {processing ? "Processing..." : "Complete Sale"}
+        </button>
+      </Modal>
+
+      {/* Receipt */}
+      <Modal open={!!completed} onClose={() => setCompleted(null)} title="Sale Complete">
+        {completed && (
+          <>
+            <div className="flex flex-col items-center mb-5">
+              <div className="w-14 h-14 rounded-full bg-green-400/10 flex items-center justify-center mb-3">
+                <CheckCircle className="w-7 h-7 text-green-400" />
+              </div>
+              <p className="text-sm text-dark-400">Change due</p>
+              <p className="text-3xl font-bold text-green-400">{money(completed.change)}</p>
+            </div>
+
+            <div id="receipt" className="bg-white text-black rounded-xl p-5 text-[13px] font-mono">
+              <div className="text-center mb-3">
+                <p className="font-bold text-base">{business?.name ?? "God's Empire"}</p>
+                <p className="text-[11px] leading-tight">{business?.address}</p>
+                <p className="text-[11px]">{business?.phone}</p>
+              </div>
+              <div className="border-t border-dashed border-black/40 py-2 text-[11px] space-y-0.5">
+                <div className="flex justify-between">
+                  <span>Receipt</span>
+                  <span>{completed.receiptNumber}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Date</span>
+                  <span>{completed.at}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Cashier</span>
+                  <span>Store Operator</span>
+                </div>
+              </div>
+              <div className="border-t border-dashed border-black/40 py-2 space-y-1">
+                {completed.items.map((i) => (
+                  <div key={i.id} className="flex justify-between gap-2">
+                    <span className="truncate">
+                      {i.quantity} × {i.name}
+                    </span>
+                    <span>{money(i.price * i.quantity)}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-dashed border-black/40 py-2 space-y-0.5">
+                <div className="flex justify-between">
+                  <span>Subtotal</span>
+                  <span>{money(completed.subtotal)}</span>
+                </div>
+                {completed.discount > 0 && (
+                  <div className="flex justify-between">
+                    <span>Discount</span>
+                    <span>-{money(completed.discount)}</span>
+                  </div>
+                )}
+                <div className="flex justify-between">
+                  <span>VAT</span>
+                  <span>{money(completed.vat)}</span>
+                </div>
+                <div className="flex justify-between font-bold text-sm border-t border-black/30 mt-1 pt-1">
+                  <span>TOTAL</span>
+                  <span>{money(completed.total)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Paid ({completed.method})</span>
+                  <span>{money(completed.paid)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Change</span>
+                  <span>{money(completed.change)}</span>
+                </div>
+              </div>
+              <p className="text-center text-[11px] border-t border-dashed border-black/40 pt-2">
+                {business?.receiptFooter}
+              </p>
+            </div>
+
+            <div className="flex gap-3 mt-5 print:hidden">
+              <button
+                onClick={() => window.print()}
+                className="flex-1 flex items-center justify-center gap-2 py-3 bg-dark-800 text-dark-200 rounded-xl hover:bg-dark-700 transition-colors"
+              >
+                <Printer className="w-4 h-4" /> Print
+              </button>
+              <button
+                onClick={() => setCompleted(null)}
+                className="flex-1 py-3 gold-gradient text-dark-950 font-semibold rounded-xl"
+              >
+                New Sale
+              </button>
+            </div>
+          </>
+        )}
+      </Modal>
+      <Modal
+        open={showScanner}
+        onClose={stopScanner}
+        title="Scan Barcode"
+      >
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="w-full rounded-xl bg-black"
+        />
+        {scannerError && (
+          <p className="mt-3 text-sm text-red-400">
+            {scannerError}
+          </p>
+        )}
+        <button
+          onClick={stopScanner}
+          className="w-full mt-4 py-3 bg-red-600 text-white rounded-xl"
+        >
+          Close Scanner
+        </button>
+      </Modal>
+    </div>
+  );
+}

@@ -1,0 +1,85 @@
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/db";
+import { products, inventoryLogs } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { getCurrentUser } from "@/lib/auth";
+import { ensureOperator } from "@/lib/operator";
+
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const [product] = await db.select().from(products).where(eq(products.id, Number(id)));
+    if (!product) {
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+    return NextResponse.json(product);
+  } catch {
+    return NextResponse.json({ error: "Failed to fetch product" }, { status: 500 });
+  }
+}
+
+export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    const productId = Number(id);
+    const body = await req.json();
+
+    const [existing] = await db.select().from(products).where(eq(products.id, productId));
+    if (!existing) {
+      return NextResponse.json({ error: "Product not found" }, { status: 404 });
+    }
+
+    const newStock = body.stock !== undefined ? Number(body.stock) : existing.stock;
+
+    const [product] = await db
+      .update(products)
+      .set({
+        name: body.name?.trim() ?? existing.name,
+        description: body.description?.trim() || null,
+        barcode: body.barcode?.trim() || null,
+        categoryId: body.categoryId ? Number(body.categoryId) : null,
+        imageUrl: body.imageUrl?.trim() || null,
+        costPrice: Number(body.costPrice ?? existing.costPrice).toFixed(2),
+        sellingPrice: Number(body.sellingPrice ?? existing.sellingPrice).toFixed(2),
+        stock: newStock,
+        minStockLevel: Number(body.minStockLevel ?? existing.minStockLevel),
+        updatedAt: new Date(),
+      })
+      .where(eq(products.id, productId))
+      .returning();
+
+    // Record a manual adjustment when stock is edited directly.
+    if (newStock !== existing.stock) {
+      const user = await getCurrentUser();
+      const userId = await ensureOperator(user);
+      await db.insert(inventoryLogs).values({
+        productId,
+        movementType: "adjustment",
+        quantity: Math.abs(newStock - existing.stock),
+        previousStock: existing.stock,
+        newStock,
+        reference: "MANUAL-EDIT",
+        notes: "Stock adjusted from product editor",
+        userId,
+      });
+    }
+
+    return NextResponse.json(product);
+  } catch (error) {
+    console.error("Failed to update product:", error);
+    return NextResponse.json({ error: "Failed to update product" }, { status: 500 });
+  }
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await params;
+    await db
+      .update(products)
+      .set({ isActive: false, updatedAt: new Date() })
+      .where(eq(products.id, Number(id)));
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ error: "Failed to delete product" }, { status: 500 });
+  }
+}

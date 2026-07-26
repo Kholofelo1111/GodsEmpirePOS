@@ -1,1 +1,0 @@
-globalThis.__RSC_MANIFEST=(globalThis.__RSC_MANIFEST||{});globalThis.__RSC_MANIFEST["/api/sales/route"]={"moduleLoading":{"prefix":"/_next/"},"ssrModuleMapping":{},"edgeSSRModuleMapping":{},"clientModules":{},"entryCSSFiles":{"/data/data/com.termux/files/home/GodsEmpirePOS/src/app/api/sales/route":[]},"rscModuleMapping":{},"edgeRscModuleMapping":{}};

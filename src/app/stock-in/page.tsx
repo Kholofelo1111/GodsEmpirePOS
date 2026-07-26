@@ -97,6 +97,7 @@ export default function StockInPage() {
       if (!barcodes.length) return;
 
       const code = barcodes[0].rawValue ?? "";
+      alert("Scanned: " + code);
       const product = products.find((p) => p.barcode === code);
       if (product) choose(product);
       else setSearch(code);

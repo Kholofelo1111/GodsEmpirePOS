@@ -244,12 +244,11 @@ export default async function DashboardPage() {
                     <Badge tone={product.stock === 0 ? "danger" : "warning"}>
                       {product.stock === 0 ? "Out of stock" : `${product.stock} left`}
                     </Badge>
-                    <Link
-                      href="/stock-in"
-                      className="text-xs text-gold-400 hover:text-gold-300 whitespace-nowrap"
+                    <span
+                      className="text-xs text-gold-400 whitespace-nowrap"
                     >
-                      Restock
-                    </Link>
+                      Restock →
+                    </span>
                   </div>
                 </Link>
               ))}

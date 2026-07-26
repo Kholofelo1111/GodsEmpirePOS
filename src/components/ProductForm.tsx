@@ -85,7 +85,30 @@ export default function ProductForm({
       const { barcodes } = await BarcodeScanner.scan();
       if (!barcodes.length) return;
 
-      set({ barcode: barcodes[0].rawValue ?? "" });
+      const code = barcodes[0].rawValue ?? "";
+
+      set({ barcode: code });
+
+      try {
+        const res = await fetch(`/api/barcode-lookup?barcode=${encodeURIComponent(code)}`);
+        const data = await res.json();
+
+        if (data.found) {
+          const matchedCategory = categories.find(c =>
+            (data.category || "").toLowerCase().includes(c.name.toLowerCase())
+          );
+
+          set({
+            barcode: code,
+            name: data.name || "",
+            description: `${data.brand} ${data.quantity}`.trim(),
+            imageUrl: data.image || "",
+            categoryId: matchedCategory ? String(matchedCategory.id) : "",
+          });
+        }
+      } catch (err) {
+        console.error(err);
+      }
     } catch (e) {
       console.error(e);
     }

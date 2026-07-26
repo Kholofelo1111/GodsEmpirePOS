@@ -21,7 +21,7 @@ export async function POST() {
     ];
 
     for (const cat of defaultCategories) {
-      await db.insert(categories).values(cat).onConflictDoNothing();
+      await db.insert(categories).values(cat).onConflictDoNothing({ target: categories.name });
     }
 
     const defaultSuppliers = [
@@ -30,7 +30,7 @@ export async function POST() {
     ];
 
     for (const sup of defaultSuppliers) {
-      await db.insert(suppliers).values(sup).onConflictDoNothing();
+      await db.insert(suppliers).values(sup).onConflictDoNothing({ target: suppliers.name });
     }
 
     const sampleProducts = [
@@ -47,7 +47,7 @@ export async function POST() {
     ];
 
     for (const prod of sampleProducts) {
-      await db.insert(products).values(prod).onConflictDoNothing();
+      await db.insert(products).values(prod).onConflictDoNothing({ target: products.barcode });
     }
 
     const businessInfo = {

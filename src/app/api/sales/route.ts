@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { sales, saleItems, products, inventoryLogs, customers, notifications } from "@/db/schema";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { getCurrentUser } from "@/lib/auth";
 import { ensureOperator } from "@/lib/operator";
 
@@ -84,11 +84,27 @@ export async function POST(req: NextRequest) {
         });
 
         if (newStock <= product.minStockLevel) {
-          await db.insert(notifications).values({
-            type: "low_stock",
-            title: "Low Stock Alert",
-            message: `${product.name} has only ${newStock} item(s) remaining.`,
-          });
+          const existing = await db
+            .select()
+            .from(notifications)
+            .where(
+              and(
+                eq(notifications.type, "low_stock"),
+                eq(notifications.isRead, false),
+                eq(
+                  notifications.message,
+                  `${product.name} has only ${newStock} item(s) remaining.`
+                )
+              )
+            );
+
+          if (existing.length === 0) {
+            await db.insert(notifications).values({
+              type: "low_stock",
+              title: "Low Stock Alert",
+              message: `${product.name} has only ${newStock} item(s) remaining.`,
+            });
+          }
         }
       }
     }

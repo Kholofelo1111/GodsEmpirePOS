@@ -350,10 +350,15 @@ export default function POSPage() {
                       <ShoppingBag className="w-7 h-7 text-dark-600 group-hover:text-gold-400 transition-colors" />
                     )}
                   </div>
-                  <p className="text-sm font-medium text-white line-clamp-2 leading-snug">
-                    {product.name}
-                  </p>
-                  <p className="text-gold-400 font-bold mt-1">{money(product.sellingPrice)}</p>
+                  <p className="text-sm font-medium text-white line-clamp-2 leading-snug">{product.name}</p>
+
+{product.categoryName && (
+  <span className="inline-block mt-1 px-2 py-1 rounded-full bg-dark-800 text-gold-400 text-[10px] font-medium">
+    {product.categoryName}
+  </span>
+)}
+
+<p className="text-gold-400 font-bold mt-2">{money(product.sellingPrice)}</p>
                   <p
                     className={`text-xs mt-0.5 ${
                       product.stock <= 0 ? "text-red-400" : "text-dark-400"
@@ -574,7 +579,14 @@ export default function POSPage() {
               ))}
             </div>
 
-            {tendered >= total && tendered > 0 && (
+            {
+tendered > 0 && tendered < total && (
+<div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm font-medium">
+Insufficient payment. Customer still owes {money(total - tendered)}.
+</div>
+)}
+
+{tendered >= total && tendered > 0 && (
               <div className="p-3 bg-green-400/10 border border-green-400/20 rounded-xl flex items-center justify-between">
                 <span className="text-sm text-dark-200">Change due</span>
                 <span className="text-2xl font-bold text-green-400">{money(change)}</span>

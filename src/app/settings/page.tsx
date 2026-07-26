@@ -22,8 +22,6 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [seeding, setSeeding] = useState(false);
-  const [seedMsg, setSeedMsg] = useState("");
 
   const [alerts, setAlerts] = useState({ low: true, out: true, summary: true });
 
@@ -49,20 +47,6 @@ export default function SettingsPage() {
       }
     } finally {
       setSaving(false);
-    }
-  };
-
-  const seed = async () => {
-    setSeeding(true);
-    setSeedMsg("");
-    try {
-      const res = await fetch("/api/seed", { method: "POST" });
-      const data = await res.json();
-      setSeedMsg(res.ok ? `Demo catalogue loaded (${data.productCount} products).` : "Seeding failed.");
-    } catch {
-      setSeedMsg("Seeding failed.");
-    } finally {
-      setSeeding(false);
     }
   };
 
@@ -215,40 +199,6 @@ export default function SettingsPage() {
                 />
               </label>
             ))}
-          </div>
-        )}
-
-        {tab === "data" && (
-          <div className="space-y-5">
-            <h2 className="text-lg font-semibold text-white">Data Management</h2>
-            {seedMsg && (
-              <div className="bg-green-400/10 border border-green-400/30 rounded-xl p-3 text-green-400 text-sm">
-                {seedMsg}
-              </div>
-            )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <button
-                onClick={seed}
-                disabled={seeding}
-                className="p-4 bg-dark-900 rounded-xl border border-dark-700 text-left hover:border-gold-400/30 transition-all disabled:opacity-50"
-              >
-                <p className="text-sm font-medium text-white">
-                  {seeding ? "Loading..." : "Load demo catalogue"}
-                </p>
-                <p className="text-xs text-dark-400 mt-1">
-                  Adds sample categories, suppliers and products
-                </p>
-              </button>
-              <a
-                href="/api/products"
-                target="_blank"
-                rel="noreferrer"
-                className="p-4 bg-dark-900 rounded-xl border border-dark-700 text-left hover:border-gold-400/30 transition-all block"
-              >
-                <p className="text-sm font-medium text-white">Export product data</p>
-                <p className="text-xs text-dark-400 mt-1">Download the raw catalogue as JSON</p>
-              </a>
-            </div>
           </div>
         )}
 

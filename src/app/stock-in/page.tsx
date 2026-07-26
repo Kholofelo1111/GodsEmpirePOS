@@ -1,5 +1,7 @@
 "use client";
 
+import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning";
+import { Capacitor } from "@capacitor/core";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { ArrowDownCircle, CheckCircle, Package, Search } from "lucide-react";
 import PageHeader from "@/components/ui/PageHeader";
@@ -74,6 +76,36 @@ export default function StockInPage() {
     setPurchaseCost(p.costPrice);
   };
 
+  const startScanner = async () => {
+    try {
+      if (!Capacitor.isNativePlatform()) {
+        window.location.href = "/scanner?return=stock-in";
+        return;
+      }
+
+      const { available } = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable();
+      if (!available) {
+        await BarcodeScanner.installGoogleBarcodeScannerModule();
+        await new Promise<void>((resolve) => {
+          BarcodeScanner.addListener("googleBarcodeScannerModuleInstallProgress", (event) => {
+            if (event.state === 4) resolve();
+          });
+        });
+      }
+
+      const { barcodes } = await BarcodeScanner.scan();
+      if (!barcodes.length) return;
+
+      const code = barcodes[0].rawValue ?? "";
+      const product = products.find((p) => p.barcode === code);
+      if (product) choose(product);
+      else setSearch(code);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+
   const reset = () => {
     setSelected(null);
     setSearch("");
@@ -142,7 +174,7 @@ export default function StockInPage() {
           )}
 
           <Field label="Product" required>
-            <div className="relative">
+            <div className="flex gap-2 items-center"><div className="relative flex-1">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-dark-400 pointer-events-none" />
               <input
                 type="text"
@@ -154,6 +186,14 @@ export default function StockInPage() {
                 placeholder="Search name or scan barcode"
                 className={`${inputClass} pl-12`}
               />
+              </div>
+              <button
+                type="button"
+                onClick={startScanner}
+                className="px-4 py-3 rounded-xl gold-gradient text-dark-950 font-semibold whitespace-nowrap"
+              >
+                📷 Scan
+              </button>
             </div>
 
             {matches.length > 0 && (

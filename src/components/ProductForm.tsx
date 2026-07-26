@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning";
+import { Capacitor } from "@capacitor/core";
+import { Camera } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Save, ArrowLeft } from "lucide-react";
@@ -61,6 +64,33 @@ export default function ProductForm({
   }, []);
 
   const set = (patch: Partial<ProductFormValues>) => setForm({ ...form, ...patch });
+
+  const scanBarcode = async () => {
+    try {
+      if (!Capacitor.isNativePlatform()) {
+        window.location.href = "/scanner?return=new-product";
+        return;
+      }
+
+      const { available } = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable();
+      if (!available) {
+        await BarcodeScanner.installGoogleBarcodeScannerModule();
+        await new Promise<void>((resolve) => {
+          BarcodeScanner.addListener("googleBarcodeScannerModuleInstallProgress", (event) => {
+            if (event.state === 4) resolve();
+          });
+        });
+      }
+
+      const { barcodes } = await BarcodeScanner.scan();
+      if (!barcodes.length) return;
+
+      set({ barcode: barcodes[0].rawValue ?? "" });
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
 
   const margin =
     Number(form.sellingPrice) > 0 && Number(form.costPrice) > 0
@@ -138,12 +168,22 @@ export default function ProductForm({
           </Field>
 
           <Field label="Barcode" hint="Scan or type the product barcode">
-            <input
-              value={form.barcode}
-              onChange={(e) => set({ barcode: e.target.value })}
-              className={`${inputClass} font-mono`}
-              placeholder="6001001000015"
-            />
+            <div className="flex gap-2 items-center">
+              <input
+                value={form.barcode}
+                onChange={(e) => set({ barcode: e.target.value })}
+                className={`${inputClass} font-mono flex-1`}
+                placeholder="6001001000015"
+              />
+              <button
+                type="button"
+                onClick={scanBarcode}
+                className="px-4 py-3 rounded-xl gold-gradient text-dark-950 font-semibold flex items-center gap-2 whitespace-nowrap"
+              >
+                <Camera className="w-5 h-5" />
+                Scan
+              </button>
+            </div>
           </Field>
 
           <Field label="Category">

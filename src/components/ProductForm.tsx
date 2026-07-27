@@ -282,6 +282,16 @@ export default function ProductForm({
               placeholder="https://..."
             />
           </Field>
+
+          {form.imageUrl && (
+            <div className="md:col-span-2">
+              <img
+                src={form.imageUrl}
+                alt={form.name || "Product"}
+                className="h-40 w-40 rounded-xl border border-dark-700 object-contain bg-white p-2"
+              />
+            </div>
+          )}
         </div>
 
         <div className="flex flex-col-reverse sm:flex-row gap-3 pt-2">

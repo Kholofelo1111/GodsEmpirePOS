@@ -48,7 +48,7 @@ export default function LoginPage() {
         </p>
 
         <input
-          className="border rounded-lg w-full p-3 mb-4"
+          className="border rounded-lg w-full p-3 mb-4 text-black placeholder:text-gray-500 bg-white"
           placeholder="Username"
           value={username}
           onChange={(e)=>setUsername(e.target.value)}
@@ -56,7 +56,7 @@ export default function LoginPage() {
 
         <input
           type="password"
-          className="border rounded-lg w-full p-3 mb-4"
+          className="border rounded-lg w-full p-3 mb-4 text-black placeholder:text-gray-500 bg-white"
           placeholder="Password"
           value={password}
           onChange={(e)=>setPassword(e.target.value)}

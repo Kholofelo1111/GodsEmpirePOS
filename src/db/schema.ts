@@ -11,7 +11,7 @@ import {
   pgEnum,
 } from "drizzle-orm/pg-core";
 
-export const userRoleEnum = pgEnum("user_role", ["admin", "cashier"]);
+export const userRoleEnum = pgEnum("user_role", ["owner", "manager", "cashier"]);
 export const paymentMethodEnum = pgEnum("payment_method", ["cash", "card"]);
 export const stockMovementTypeEnum = pgEnum("stock_movement_type", ["in", "out", "adjustment"]);
 
@@ -20,7 +20,7 @@ export const users = pgTable("users", {
   username: varchar("username", { length: 50 }).notNull().unique(),
   password: varchar("password", { length: 255 }).notNull(),
   fullName: varchar("full_name", { length: 100 }).notNull(),
-  role: userRoleEnum("role").notNull().default("cashier"),
+  role: userRoleEnum("role").notNull().default("owner"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

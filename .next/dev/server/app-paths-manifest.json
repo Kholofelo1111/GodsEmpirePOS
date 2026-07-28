@@ -3,6 +3,7 @@
   "/api/categories/route": "app/api/categories/route.js",
   "/api/customers/route": "app/api/customers/route.js",
   "/api/settings/route": "app/api/settings/route.js",
-  "/page": "app/page.js",
+  "/api/sales/route": "app/api/sales/route.js",
+  "/dashboard/page": "app/dashboard/page.js",
   "/pos/page": "app/pos/page.js"
 }

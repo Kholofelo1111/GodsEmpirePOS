@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { categories, products, settings, suppliers } from "@/db/schema";
 import { sql } from "drizzle-orm";
 import { ensureOperator } from "@/lib/operator";
+import { DEFAULT_USER } from "@/lib/auth";
 
 /**
  * Seeds demo catalogue data. Authentication is disabled, so no user accounts
@@ -10,7 +11,7 @@ import { ensureOperator } from "@/lib/operator";
  */
 export async function POST() {
   try {
-    await ensureOperator();
+    await ensureOperator(DEFAULT_USER);
 
     const defaultCategories = [
       { name: "General", description: "General products" },

@@ -120,8 +120,11 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json(sale, { status: 201 });
-  } catch (error) {
-    console.error("Sale creation error:", error);
-    return NextResponse.json({ error: "Failed to create sale" }, { status: 500 });
+  } catch (error: any) {
+    console.error("SALE ERROR");
+    console.error(error);
+    console.error(error?.message);
+    console.error(error?.stack);
+    return NextResponse.json({ error: error?.message ?? "Failed to create sale" }, { status: 500 });
   }
 }

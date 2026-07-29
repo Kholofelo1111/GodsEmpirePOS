@@ -137,6 +137,14 @@ export default function SettingsPage() {
         {tab === "receipt" && (
           <div className="space-y-5">
             <h2 className="text-lg font-semibold text-white">Receipt Customisation</h2>
+            <Field label="Logo URL" hint="Optional. A hosted image URL — shown at the top of printed receipts.">
+              <input
+                value={form.logoUrl ?? ""}
+                onChange={(e) => update({ logoUrl: e.target.value })}
+                className={inputClass}
+                placeholder="https://example.com/logo.png"
+              />
+            </Field>
             <Field label="Footer message">
               <textarea
                 value={form.receiptFooter}

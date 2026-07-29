@@ -12,7 +12,8 @@ import {
 } from "drizzle-orm/pg-core";
 
 export const userRoleEnum = pgEnum("user_role", ["owner", "manager", "cashier"]);
-export const paymentMethodEnum = pgEnum("payment_method", ["cash", "card"]);
+export const paymentMethodEnum = pgEnum("payment_method", ["cash", "card", "split", "eft", "voucher"]);
+export const paymentComponentEnum = pgEnum("payment_component", ["cash", "card", "eft", "voucher"]);
 export const stockMovementTypeEnum = pgEnum("stock_movement_type", ["in", "out", "adjustment"]);
 
 export const users = pgTable("users", {
@@ -56,6 +57,9 @@ export const customers = pgTable("customers", {
   phone: varchar("phone", { length: 20 }),
   address: text("address"),
   loyaltyPoints: integer("loyalty_points").notNull().default(0),
+  visitCount: integer("visit_count").notNull().default(0),
+  lastVisitAt: timestamp("last_visit_at"),
+  isWalkIn: boolean("is_walk_in").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -91,6 +95,17 @@ export const saleItems = pgTable("sale_items", {
   quantity: integer("quantity").notNull(),
   unitPrice: decimal("unit_price", { precision: 10, scale: 2 }).notNull(),
   totalPrice: decimal("total_price", { precision: 10, scale: 2 }).notNull(),
+});
+
+// One row per payment "leg". A simple cash sale has exactly one row; a
+// split payment (e.g. Cash R25 + Card R25) has one row per method so the
+// receipt and reports can show an itemized breakdown.
+export const salePayments = pgTable("sale_payments", {
+  id: serial("id").primaryKey(),
+  saleId: integer("sale_id").references(() => sales.id).notNull(),
+  method: paymentComponentEnum("method").notNull(),
+  amount: decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const stockIn = pgTable("stock_in", {

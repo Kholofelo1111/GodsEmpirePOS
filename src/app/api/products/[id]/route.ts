@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { products, inventoryLogs } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq, ne } from "drizzle-orm";
 import { getCurrentUser } from "@/lib/auth";
 import { ensureOperator } from "@/lib/operator";
+import { generateUniqueBarcode } from "@/lib/barcode";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -31,12 +32,37 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const newStock = body.stock !== undefined ? Number(body.stock) : existing.stock;
 
+    const requestedBarcode: string | undefined = body.barcode?.trim();
+    let finalBarcode: string;
+    if (requestedBarcode) {
+      if (requestedBarcode !== existing.barcode) {
+        const [dupe] = await db
+          .select({ id: products.id })
+          .from(products)
+          .where(and(eq(products.barcode, requestedBarcode), ne(products.id, productId)));
+        if (dupe) {
+          return NextResponse.json({ error: "A product with this barcode already exists" }, { status: 409 });
+        }
+      }
+      finalBarcode = requestedBarcode;
+    } else {
+      // Barcode field was cleared — generate a new unique one rather than
+      // leaving the product without a scannable code.
+      finalBarcode = await generateUniqueBarcode(async (code) => {
+        const [dupe] = await db
+          .select({ id: products.id })
+          .from(products)
+          .where(and(eq(products.barcode, code), ne(products.id, productId)));
+        return Boolean(dupe);
+      });
+    }
+
     const [product] = await db
       .update(products)
       .set({
         name: body.name?.trim() ?? existing.name,
         description: body.description?.trim() || null,
-        barcode: body.barcode?.trim() || null,
+        barcode: finalBarcode,
         categoryId: body.categoryId ? Number(body.categoryId) : null,
         imageUrl: body.imageUrl?.trim() || null,
         costPrice: Number(body.costPrice ?? existing.costPrice).toFixed(2),

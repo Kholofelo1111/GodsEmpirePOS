@@ -6,8 +6,9 @@ import { Capacitor } from "@capacitor/core";
 import { Camera } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Save, ArrowLeft } from "lucide-react";
+import { Save, ArrowLeft, Printer } from "lucide-react";
 import { Field, inputClass, selectClass, textareaClass } from "@/components/ui/Field";
+import Barcode from "@/components/Barcode";
 
 export interface ProductFormValues {
   name: string;
@@ -40,6 +41,8 @@ interface ProductFormProps {
   submitLabel: string;
   endpoint: string;
   method: "POST" | "PUT";
+  /** When editing an existing product, enables the Print Barcode button. */
+  productId?: number;
 }
 
 export default function ProductForm({
@@ -49,6 +52,7 @@ export default function ProductForm({
   submitLabel,
   endpoint,
   method,
+  productId,
 }: ProductFormProps) {
   const router = useRouter();
   const [form, setForm] = useState<ProductFormValues>(initial);
@@ -190,13 +194,17 @@ export default function ProductForm({
             />
           </Field>
 
-          <Field label="Barcode" hint="Scan or type the product barcode">
+          <Field
+            label="Barcode"
+            hint="Scan or type a barcode — leave blank to auto-generate a unique one"
+            className="md:col-span-2"
+          >
             <div className="flex gap-2 items-center">
               <input
                 value={form.barcode}
                 onChange={(e) => set({ barcode: e.target.value })}
                 className={`${inputClass} font-mono flex-1`}
-                placeholder="6001001000015"
+                placeholder="Leave blank to auto-generate"
               />
               <button
                 type="button"
@@ -207,6 +215,25 @@ export default function ProductForm({
                 Scan
               </button>
             </div>
+
+            {form.barcode && (
+              <div className="mt-3 flex flex-wrap items-center gap-4 bg-white rounded-xl p-3">
+                <Barcode value={form.barcode} height={50} width={1.8} fontSize={13} />
+              </div>
+            )}
+            {!form.barcode && (
+              <p className="mt-2 text-xs text-dark-500">
+                A unique barcode will be generated automatically when you save.
+              </p>
+            )}
+            {productId && (
+              <Link
+                href={`/products/print-barcodes?ids=${productId}`}
+                className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-dark-800 text-dark-200 text-sm font-medium rounded-xl hover:bg-dark-700 transition-colors"
+              >
+                <Printer className="w-4 h-4" /> Print Barcode
+              </Link>
+            )}
           </Field>
 
           <Field label="Category">

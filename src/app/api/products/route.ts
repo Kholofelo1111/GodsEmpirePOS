@@ -2,6 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/db";
 import { products, categories } from "@/db/schema";
 import { and, asc, eq, ilike, or, sql } from "drizzle-orm";
+import { generateUniqueBarcode } from "@/lib/barcode";
+
+async function isBarcodeTaken(code: string): Promise<boolean> {
+  const [existing] = await db.select({ id: products.id }).from(products).where(eq(products.barcode, code));
+  return Boolean(existing);
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -9,9 +15,20 @@ export async function GET(req: NextRequest) {
     const search = sp.get("search")?.trim();
     const categoryId = sp.get("categoryId");
     const barcode = sp.get("barcode")?.trim();
+    const idsParam = sp.get("ids")?.trim();
 
     const filters = [eq(products.isActive, true)];
 
+    if (idsParam) {
+      const ids = idsParam
+        .split(",")
+        .map((v) => Number(v.trim()))
+        .filter((n) => Number.isFinite(n));
+      if (ids.length > 0) {
+        const idMatch = or(...ids.map((id) => eq(products.id, id)));
+        if (idMatch) filters.push(idMatch);
+      }
+    }
     if (barcode) {
       filters.push(eq(products.barcode, barcode));
     }
@@ -62,11 +79,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "A valid selling price is required" }, { status: 400 });
     }
 
+    let finalBarcode: string;
     if (barcode?.trim()) {
-      const [existing] = await db.select({ id: products.id }).from(products).where(eq(products.barcode, barcode.trim()));
-      if (existing) {
+      if (await isBarcodeTaken(barcode.trim())) {
         return NextResponse.json({ error: "A product with this barcode already exists" }, { status: 409 });
       }
+      finalBarcode = barcode.trim();
+    } else {
+      // No barcode supplied — generate a unique one automatically so every
+      // product is scannable, even without manufacturer packaging.
+      finalBarcode = await generateUniqueBarcode(isBarcodeTaken);
     }
 
     const [product] = await db
@@ -74,7 +96,7 @@ export async function POST(req: NextRequest) {
       .values({
         name: name.trim(),
         description: description?.trim() || null,
-        barcode: barcode?.trim() || null,
+        barcode: finalBarcode,
         categoryId: categoryId ? Number(categoryId) : null,
         imageUrl: imageUrl?.trim() || null,
         costPrice: Number(costPrice || 0).toFixed(2),

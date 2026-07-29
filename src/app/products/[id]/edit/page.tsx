@@ -53,6 +53,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
       submitLabel="Update Product"
       endpoint={`/api/products/${id}`}
       method="PUT"
+      productId={Number(id)}
     />
   );
 }

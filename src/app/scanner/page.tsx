@@ -6,6 +6,7 @@ import PageHeader from "@/components/ui/PageHeader";
 import Badge from "@/components/ui/Badge";
 import { Field, inputClass } from "@/components/ui/Field";
 import { money, stockStatus } from "@/lib/format";
+import { scanFeedback } from "@/lib/scanFeedback";
 
 interface Product {
   id: number;
@@ -27,6 +28,8 @@ interface BarcodeDetectorLike {
 }
 type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => BarcodeDetectorLike;
 
+const CAMERA_PREF_KEY = "ge-pos-preferred-camera";
+
 export default function ScannerPage() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -38,6 +41,8 @@ export default function ScannerPage() {
   const [result, setResult] = useState<Product | null>(null);
   const [missingBarcode, setMissingBarcode] = useState("");
   const [searching, setSearching] = useState(false);
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [activeCameraId, setActiveCameraId] = useState<string>("");
 
   const lookup = useCallback(async (barcode: string) => {
     const code = barcode.trim();
@@ -54,7 +59,7 @@ export default function ScannerPage() {
 
       if (found) {
         setResult(found);
-        if (navigator.vibrate) navigator.vibrate(60);
+        scanFeedback();
       } else {
         setMissingBarcode(code);
       }
@@ -72,57 +77,97 @@ export default function ScannerPage() {
     setScanning(false);
   }, []);
 
-  const startCamera = useCallback(async () => {
-    setCameraError("");
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
-      });
-      streamRef.current = stream;
-      setScanning(true);
+  const runDetectionLoop = useCallback(() => {
+    const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
+      .BarcodeDetector;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-
-      const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor })
-        .BarcodeDetector;
-
-      if (!Detector) {
-        setCameraError(
-          "Live decoding isn't supported by this browser — use a hardware scanner or type the barcode below."
-        );
-        return;
-      }
-
-      const detector = new Detector({
-        formats: ["ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e", "qr_code"],
-      });
-
-      const tick = async () => {
-        if (!videoRef.current || !streamRef.current) return;
-        try {
-          const codes = await detector.detect(videoRef.current);
-          if (codes.length > 0) {
-            const value = codes[0].rawValue;
-            stopCamera();
-            setManual(value);
-            lookup(value);
-            return;
-          }
-        } catch {
-          /* frame not ready — keep scanning */
-        }
-        rafRef.current = requestAnimationFrame(tick);
-      };
-
-      rafRef.current = requestAnimationFrame(tick);
-    } catch {
-      setCameraError("Camera access denied. Allow camera permission or enter the barcode manually.");
-      setScanning(false);
+    if (!Detector) {
+      setCameraError(
+        "Live decoding isn't supported by this browser — use a hardware scanner or type the barcode below."
+      );
+      return;
     }
+
+    const detector = new Detector({
+      formats: ["ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e", "qr_code"],
+    });
+
+    const tick = async () => {
+      if (!videoRef.current || !streamRef.current) return;
+      try {
+        const codes = await detector.detect(videoRef.current);
+        if (codes.length > 0) {
+          const value = codes[0].rawValue;
+          stopCamera();
+          setManual(value);
+          lookup(value);
+          return;
+        }
+      } catch {
+        /* frame not ready — keep scanning */
+      }
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
   }, [lookup, stopCamera]);
+
+  const startCamera = useCallback(
+    async (deviceId?: string) => {
+      setCameraError("");
+      try {
+        const preferred = deviceId || localStorage.getItem(CAMERA_PREF_KEY) || "";
+        const constraints: MediaStreamConstraints = {
+          video: preferred
+            ? { deviceId: { exact: preferred } }
+            : { facingMode: { ideal: "environment" } },
+        };
+
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } catch {
+          // Saved/requested device may no longer exist — fall back to default.
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { ideal: "environment" } },
+          });
+        }
+
+        streamRef.current = stream;
+        setScanning(true);
+
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+
+        const activeDeviceId = stream.getVideoTracks()[0]?.getSettings().deviceId ?? "";
+        if (activeDeviceId) {
+          setActiveCameraId(activeDeviceId);
+          localStorage.setItem(CAMERA_PREF_KEY, activeDeviceId);
+        }
+
+        // Camera labels are only populated once permission has been granted,
+        // so enumerate here rather than on page load.
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        setCameras(devices.filter((d) => d.kind === "videoinput"));
+
+        runDetectionLoop();
+      } catch {
+        setCameraError("Camera access denied. Allow camera permission or enter the barcode manually.");
+        setScanning(false);
+      }
+    },
+    [runDetectionLoop]
+  );
+
+  const switchCamera = useCallback(
+    async (deviceId: string) => {
+      stopCamera();
+      await startCamera(deviceId);
+    },
+    [stopCamera, startCamera]
+  );
 
   useEffect(() => () => stopCamera(), [stopCamera]);
 
@@ -162,7 +207,7 @@ export default function ScannerPage() {
                   Use your phone camera to scan product barcodes
                 </p>
                 <button
-                  onClick={startCamera}
+                  onClick={() => startCamera()}
                   className="px-6 py-3 gold-gradient text-dark-950 font-semibold rounded-xl hover:opacity-90 transition-opacity"
                 >
                   Start Camera
@@ -172,12 +217,39 @@ export default function ScannerPage() {
           </div>
 
           {scanning && (
-            <button
-              onClick={stopCamera}
-              className="w-full flex items-center justify-center gap-2 py-3 bg-dark-800 text-dark-200 rounded-xl hover:bg-dark-700 transition-colors"
-            >
-              <CameraOff className="w-4 h-4" /> Stop Camera
-            </button>
+            <div className="space-y-2 mb-2">
+              {cameras.length > 1 && (
+                <div className="flex gap-2 flex-wrap">
+                  {cameras.map((cam, idx) => {
+                    const label = cam.label || (idx === 0 ? "Camera 1" : `Camera ${idx + 1}`);
+                    const friendly = /front|user|face/i.test(cam.label)
+                      ? "Front Camera"
+                      : /back|rear|environment/i.test(cam.label)
+                      ? "Rear Camera"
+                      : label;
+                    return (
+                      <button
+                        key={cam.deviceId}
+                        onClick={() => switchCamera(cam.deviceId)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                          activeCameraId === cam.deviceId
+                            ? "bg-gold-400/20 text-gold-400 border border-gold-400/40"
+                            : "bg-dark-800 text-dark-300 hover:bg-dark-700"
+                        }`}
+                      >
+                        {friendly}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <button
+                onClick={stopCamera}
+                className="w-full flex items-center justify-center gap-2 py-3 bg-dark-800 text-dark-200 rounded-xl hover:bg-dark-700 transition-colors"
+              >
+                <CameraOff className="w-4 h-4" /> Stop Camera
+              </button>
+            </div>
           )}
 
           {cameraError && (

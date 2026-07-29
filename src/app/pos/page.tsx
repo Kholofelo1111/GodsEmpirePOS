@@ -14,6 +14,9 @@ import {
   UserPlus,
   Printer,
   Camera,
+  Landmark,
+  Ticket,
+  SplitSquareHorizontal,
 } from "lucide-react";
 import SearchInput from "@/components/ui/SearchInput";
 import Modal from "@/components/ui/Modal";
@@ -22,6 +25,16 @@ import Spinner from "@/components/ui/Spinner";
 import { Field, inputClass, selectClass } from "@/components/ui/Field";
 import { money } from "@/lib/format";
 import type { BusinessInfo } from "@/lib/queries";
+import { scanFeedback, createScanDebouncer } from "@/lib/scanFeedback";
+
+// BarcodeDetector is not in the TS DOM lib yet.
+interface DetectedBarcode {
+  rawValue: string;
+}
+interface BarcodeDetectorLike {
+  detect: (source: CanvasImageSource) => Promise<DetectedBarcode[]>;
+}
+type BarcodeDetectorCtor = new (options?: { formats?: string[] }) => BarcodeDetectorLike;
 
 interface Product {
   id: number;
@@ -42,6 +55,11 @@ interface CartItem {
   stock: number;
 }
 
+interface PaymentLeg {
+  method: "cash" | "card" | "eft" | "voucher";
+  amount: number;
+}
+
 interface CompletedSale {
   receiptNumber: string;
   items: CartItem[];
@@ -52,6 +70,8 @@ interface CompletedSale {
   paid: number;
   change: number;
   method: string;
+  payments: PaymentLeg[];
+  cashierName: string;
   at: string;
 }
 
@@ -70,8 +90,10 @@ export default function POSPage() {
   const [customerId, setCustomerId] = useState("");
 
   const [showPayment, setShowPayment] = useState(false);
-  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card">("cash");
+  const [paymentMethod, setPaymentMethod] = useState<"cash" | "card" | "eft" | "voucher" | "split">("cash");
   const [amountTendered, setAmountTendered] = useState("");
+  const [splitCash, setSplitCash] = useState("");
+  const [splitCard, setSplitCard] = useState("");
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState("");
   const [completed, setCompleted] = useState<CompletedSale | null>(null);
@@ -79,6 +101,9 @@ export default function POSPage() {
   const [scannerError, setScannerError] = useState("");
   const [scanning, setScanning] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const shouldProcessScan = useRef(createScanDebouncer(1000)).current;
 
   const loadData = useCallback(async () => {
     try {
@@ -184,12 +209,29 @@ export default function POSPage() {
   const change = Math.max(0, tendered - total);
   const cartCount = cart.reduce((sum, i) => sum + i.quantity, 0);
 
+  const splitCashValue = Number(splitCash || 0);
+  const splitCardValue = Number(splitCard || 0);
+  const splitTotal = splitCashValue + splitCardValue;
+  const splitRemaining = Math.round((total - splitTotal) * 100) / 100;
+
+  /** Builds the payment legs to submit, based on the selected payment mode. */
+  const buildPayments = (): PaymentLeg[] => {
+    if (paymentMethod === "split") {
+      const legs: PaymentLeg[] = [];
+      if (splitCashValue > 0) legs.push({ method: "cash", amount: splitCashValue });
+      if (splitCardValue > 0) legs.push({ method: "card", amount: splitCardValue });
+      return legs;
+    }
+    return [{ method: paymentMethod, amount: total }];
+  };
+
   const checkout = async () => {
     if (cart.length === 0) return;
     setProcessing(true);
     setError("");
 
     try {
+      const payments = buildPayments();
       const res = await fetch("/api/sales", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -204,7 +246,8 @@ export default function POSPage() {
           vatAmount,
           total,
           paymentMethod,
-          amountTendered: paymentMethod === "cash" ? tendered : total,
+          payments,
+          amountTendered: paymentMethod === "cash" ? tendered : undefined,
           changeGiven: paymentMethod === "cash" ? change : 0,
           customerId: customerId ? Number(customerId) : null,
         }),
@@ -212,7 +255,8 @@ export default function POSPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Sale failed");
+        const detail = Array.isArray(data.details) && data.details.length > 0 ? `: ${data.details.join("; ")}` : "";
+        throw new Error((data.error || "Sale failed") + detail);
       }
 
       const sale = await res.json();
@@ -226,12 +270,16 @@ export default function POSPage() {
         paid: paymentMethod === "cash" ? tendered : total,
         change: paymentMethod === "cash" ? change : 0,
         method: paymentMethod,
+        payments: sale.payments ?? payments,
+        cashierName: sale.cashierName ?? "Store Operator",
         at: new Date().toLocaleString("en-ZA"),
       });
 
       setCart([]);
       setDiscount("");
       setAmountTendered("");
+      setSplitCash("");
+      setSplitCard("");
       setCustomerId("");
       setShowPayment(false);
       loadData();
@@ -243,13 +291,73 @@ export default function POSPage() {
   };
 
 
-  const startScanner = async () => {
+  /** Handles one decoded barcode: debounce, look up, add to cart, give feedback. Feature 11. */
+  const handleScannedCode = useCallback(
+    (code: string) => {
+      if (!code || !shouldProcessScan(code)) return;
+
+      const product = products.find((p) => p.barcode === code);
+      if (product) {
+        addToCart(product);
+        scanFeedback();
+        setScannerError("");
+      } else {
+        setScannerError(`No product found for barcode ${code}`);
+      }
+    },
+    [products, addToCart, shouldProcessScan]
+  );
+
+  const startWebScanner = useCallback(async () => {
+    setScannerError("");
     try {
-      setScannerError("");
-      if (!Capacitor.isNativePlatform()) {
-        window.location.href = "/scanner?return=pos";
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+      });
+      streamRef.current = stream;
+      setShowScanner(true);
+      setScanning(true);
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+      }
+
+      const Detector = (window as unknown as { BarcodeDetector?: BarcodeDetectorCtor }).BarcodeDetector;
+      if (!Detector) {
+        setScannerError("Live scanning isn't supported by this browser. Use the search box to find products instead.");
         return;
       }
+      const detector = new Detector({
+        formats: ["ean_13", "ean_8", "code_128", "code_39", "upc_a", "upc_e"],
+      });
+
+      const tick = async () => {
+        if (!videoRef.current || !streamRef.current) return;
+        try {
+          const codes = await detector.detect(videoRef.current);
+          if (codes.length > 0) {
+            handleScannedCode(codes[0].rawValue);
+          }
+        } catch {
+          /* frame not ready — keep scanning */
+        }
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      rafRef.current = requestAnimationFrame(tick);
+    } catch {
+      setScannerError("Camera access denied. Allow camera permission to scan, or search for products instead.");
+      setScanning(false);
+    }
+  }, [handleScannedCode]);
+
+  const startScanner = async () => {
+    setScannerError("");
+    if (!Capacitor.isNativePlatform()) {
+      await startWebScanner();
+      return;
+    }
+    try {
       const { available } = await BarcodeScanner.isGoogleBarcodeScannerModuleAvailable();
       if (!available) {
         await BarcodeScanner.installGoogleBarcodeScannerModule();
@@ -259,24 +367,35 @@ export default function POSPage() {
           });
         });
       }
-      const { barcodes } = await BarcodeScanner.scan();
-      if (!barcodes.length) return;
-      const code = barcodes[0].rawValue ?? "";
-      if (!code) return;
-      const product = products.find((p) => p.barcode === code);
-      if (product) {
-        addToCart(product);
-      } else {
-        setSearch(code);
+
+      setScanning(true);
+      // Scan continuously: ML Kit's scan() returns after each detection, so
+      // we immediately re-open it — letting the cashier scan Product A, B,
+      // C... in sequence without re-tapping "Scan" each time (Feature 7).
+      // The loop ends when scan() rejects (user cancelled) or returns empty.
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { barcodes } = await BarcodeScanner.scan();
+        if (!barcodes.length) break;
+        const code = barcodes[0].rawValue ?? "";
+        if (!code) break;
+        handleScannedCode(code);
       }
     } catch (e) {
       console.error(e);
-      setScannerError("Scanning cancelled or failed.");
+      // A cancelled scan also lands here — that's expected, not an error to surface.
+    } finally {
+      setScanning(false);
     }
   };
+
   const stopScanner = () => {
+    if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
     setScanning(false);
     setShowScanner(false);
+    setScannerError("");
   };
 
   if (loading) return <Spinner label="Loading till..." />;
@@ -291,8 +410,17 @@ export default function POSPage() {
             className="flex items-center justify-center gap-2 w-full py-3 mb-3 gold-gradient text-dark-950 font-semibold rounded-xl"
           >
             <Camera className="w-5 h-5" />
-            Scan Barcode
+            {scanning && Capacitor.isNativePlatform() ? "Scanning... (tap back to stop)" : "Scan Barcode"}
           </button>
+
+          {!showScanner && scannerError && (
+            <div className="flex items-center justify-between gap-3 p-3 bg-orange-400/10 border border-orange-400/20 rounded-xl text-orange-300 text-sm">
+              <span>{scannerError}</span>
+              <button onClick={() => setScannerError("")} className="text-orange-300/70 hover:text-orange-200">
+                ✕
+              </button>
+            </div>
+          )}
 
           <SearchInput
             value={search}
@@ -519,37 +647,33 @@ export default function POSPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3 mb-5">
-          <button
-            onClick={() => setPaymentMethod("cash")}
-            className={`p-4 rounded-xl border-2 transition-all ${
-              paymentMethod === "cash"
-                ? "border-gold-400 bg-gold-400/10"
-                : "border-dark-700 hover:border-dark-600"
-            }`}
-          >
-            <Banknote
-              className={`w-7 h-7 mx-auto mb-2 ${
-                paymentMethod === "cash" ? "text-gold-400" : "text-dark-400"
+        <div className="grid grid-cols-3 gap-3 mb-5">
+          {(
+            [
+              { key: "cash", label: "Cash", icon: Banknote },
+              { key: "card", label: "Card", icon: CreditCard },
+              { key: "eft", label: "EFT", icon: Landmark },
+              { key: "voucher", label: "Voucher", icon: Ticket },
+              { key: "split", label: "Split", icon: SplitSquareHorizontal },
+            ] as const
+          ).map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              onClick={() => setPaymentMethod(key)}
+              className={`p-4 rounded-xl border-2 transition-all ${
+                paymentMethod === key
+                  ? "border-gold-400 bg-gold-400/10"
+                  : "border-dark-700 hover:border-dark-600"
               }`}
-            />
-            <p className="text-sm font-medium text-white">Cash</p>
-          </button>
-          <button
-            onClick={() => setPaymentMethod("card")}
-            className={`p-4 rounded-xl border-2 transition-all ${
-              paymentMethod === "card"
-                ? "border-gold-400 bg-gold-400/10"
-                : "border-dark-700 hover:border-dark-600"
-            }`}
-          >
-            <CreditCard
-              className={`w-7 h-7 mx-auto mb-2 ${
-                paymentMethod === "card" ? "text-gold-400" : "text-dark-400"
-              }`}
-            />
-            <p className="text-sm font-medium text-white">Card</p>
-          </button>
+            >
+              <Icon
+                className={`w-7 h-7 mx-auto mb-2 ${
+                  paymentMethod === key ? "text-gold-400" : "text-dark-400"
+                }`}
+              />
+              <p className="text-sm font-medium text-white">{label}</p>
+            </button>
+          ))}
         </div>
 
         {paymentMethod === "cash" && (
@@ -595,9 +719,60 @@ Insufficient payment. Customer still owes {money(total - tendered)}.
           </div>
         )}
 
+        {paymentMethod === "split" && (
+          <div className="mb-5 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Cash amount">
+                <input
+                  type="number"
+                  value={splitCash}
+                  onChange={(e) => setSplitCash(e.target.value)}
+                  className={inputClass}
+                  placeholder="0.00"
+                  step="0.01"
+                  min={0}
+                  autoFocus
+                />
+              </Field>
+              <Field label="Card amount">
+                <input
+                  type="number"
+                  value={splitCard}
+                  onChange={(e) => setSplitCard(e.target.value)}
+                  className={inputClass}
+                  placeholder="0.00"
+                  step="0.01"
+                  min={0}
+                />
+              </Field>
+            </div>
+
+            {splitRemaining > 0.005 && (
+              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm font-medium">
+                Still needs {money(splitRemaining)} to reach the total.
+              </div>
+            )}
+            {splitRemaining < -0.005 && (
+              <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm font-medium">
+                Payments exceed the total by {money(Math.abs(splitRemaining))}.
+              </div>
+            )}
+            {Math.abs(splitRemaining) <= 0.005 && splitTotal > 0 && (
+              <div className="p-3 bg-green-400/10 border border-green-400/20 rounded-xl flex items-center justify-between">
+                <span className="text-sm text-dark-200">Cash {money(splitCashValue)} + Card {money(splitCardValue)}</span>
+                <span className="text-lg font-bold text-green-400">= {money(splitTotal)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
         <button
           onClick={checkout}
-          disabled={processing || (paymentMethod === "cash" && tendered < total)}
+          disabled={
+            processing ||
+            (paymentMethod === "cash" && tendered < total) ||
+            (paymentMethod === "split" && Math.abs(splitRemaining) > 0.005)
+          }
           className="w-full py-3.5 gold-gradient text-dark-950 font-semibold rounded-xl hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {processing ? "Processing..." : "Complete Sale"}
@@ -618,6 +793,10 @@ Insufficient payment. Customer still owes {money(total - tendered)}.
 
             <div id="receipt" className="bg-white text-black rounded-xl p-5 text-[13px] font-mono">
               <div className="text-center mb-3">
+                {business?.logoUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={business.logoUrl} alt="" className="h-12 mx-auto mb-2 object-contain" />
+                )}
                 <p className="font-bold text-base">{business?.name ?? "God's Empire"}</p>
                 <p className="text-[11px] leading-tight">{business?.address}</p>
                 <p className="text-[11px]">{business?.phone}</p>
@@ -633,7 +812,7 @@ Insufficient payment. Customer still owes {money(total - tendered)}.
                 </div>
                 <div className="flex justify-between">
                   <span>Cashier</span>
-                  <span>Store Operator</span>
+                  <span>{completed.cashierName}</span>
                 </div>
               </div>
               <div className="border-t border-dashed border-black/40 py-2 space-y-1">
@@ -665,14 +844,18 @@ Insufficient payment. Customer still owes {money(total - tendered)}.
                   <span>TOTAL</span>
                   <span>{money(completed.total)}</span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Paid ({completed.method})</span>
-                  <span>{money(completed.paid)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Change</span>
-                  <span>{money(completed.change)}</span>
-                </div>
+                {completed.payments.map((leg, idx) => (
+                  <div key={idx} className="flex justify-between">
+                    <span className="capitalize">{leg.method}</span>
+                    <span>{money(leg.amount)}</span>
+                  </div>
+                ))}
+                {completed.change > 0 && (
+                  <div className="flex justify-between">
+                    <span>Change</span>
+                    <span>{money(completed.change)}</span>
+                  </div>
+                )}
               </div>
               <p className="text-center text-[11px] border-t border-dashed border-black/40 pt-2">
                 {business?.receiptFooter}
@@ -708,8 +891,11 @@ Insufficient payment. Customer still owes {money(total - tendered)}.
           muted
           className="w-full rounded-xl bg-black"
         />
+        <p className="mt-3 text-center text-sm text-dark-300">
+          {cartCount} item{cartCount === 1 ? "" : "s"} in cart — keep scanning or close when done
+        </p>
         {scannerError && (
-          <p className="mt-3 text-sm text-red-400">
+          <p className="mt-2 text-sm text-orange-300 text-center">
             {scannerError}
           </p>
         )}

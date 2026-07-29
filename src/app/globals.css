@@ -99,7 +99,9 @@ body {
     visibility: hidden;
   }
   #receipt,
-  #receipt * {
+  #receipt *,
+  #barcode-print-sheet,
+  #barcode-print-sheet * {
     visibility: visible;
   }
   #receipt {
@@ -113,8 +115,63 @@ body {
     border-radius: 0;
     box-shadow: none;
   }
+  #barcode-print-sheet {
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 100%;
+    margin: 0;
+  }
   @page {
     size: 80mm auto;
     margin: 0;
+  }
+}
+
+/* Barcode label grid: sized for standard 2.625in x 1in label sheets
+   (e.g. Avery 5160-style, 3 labels per row). Also used on-screen as a
+   preview grid before printing. */
+.barcode-label-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 3mm;
+}
+
+.barcode-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 2.625in;
+  height: 1in;
+  padding: 2mm;
+  background: #fff;
+  color: #000;
+  border: 1px dashed #ccc;
+  overflow: hidden;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.barcode-label-name {
+  font-size: 8px;
+  font-weight: 600;
+  color: #000;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.barcode-label-price {
+  font-size: 10px;
+  font-weight: 700;
+  color: #000;
+  margin-top: -2px;
+}
+
+@media print {
+  .barcode-label {
+    border: none;
   }
 }

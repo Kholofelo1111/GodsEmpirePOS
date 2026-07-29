@@ -15,16 +15,17 @@ import {
 
 import StatCard from "@/components/ui/StatCard";
 import Badge from "@/components/ui/Badge";
-import { getDashboardStats, getRecentSales, getLowStockProducts } from "@/lib/queries";
+import { getDashboardStats, getRecentSales, getLowStockProducts, getCustomerActivityStats } from "@/lib/queries";
 import { money, formatTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
 export default async function Dashboard() {
-  const [stats, recentSales, lowStock] = await Promise.all([
+  const [stats, recentSales, lowStock, customerActivity] = await Promise.all([
     getDashboardStats(),
     getRecentSales(5),
     getLowStockProducts(5),
+    getCustomerActivityStats(),
   ]);
 
   const today = new Date().toLocaleDateString("en-ZA", {
@@ -107,6 +108,13 @@ export default async function Dashboard() {
         <StatCard
           label="Customers"
           value={String(stats.customerCount)}
+          tone="cyan"
+          icon={<Users className="text-cyan-400" />}
+        />
+
+        <StatCard
+          label="Today's Customers"
+          value={String(customerActivity.todayCustomers)}
           tone="cyan"
           icon={<Users className="text-cyan-400" />}
         />
@@ -327,6 +335,62 @@ export default async function Dashboard() {
         </section>
 
 
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Recent Customers */}
+        <section className="glass-card rounded-2xl p-5">
+          <div className="flex justify-between mb-4">
+            <h2 className="text-lg font-semibold text-white">Recent Customers</h2>
+            <Link href="/customers" className="text-sm text-gold-400">
+              View all →
+            </Link>
+          </div>
+
+          {customerActivity.recentCustomers.length === 0 ? (
+            <p className="text-dark-400 text-sm">No customer visits yet</p>
+          ) : (
+            <div className="space-y-3">
+              {customerActivity.recentCustomers.map((c) => (
+                <div key={c.id} className="flex items-center justify-between bg-dark-900 rounded-xl p-3">
+                  <div>
+                    <p className="text-white font-medium">{c.name}</p>
+                    <p className="text-xs text-dark-400">
+                      {c.lastVisitAt ? formatTime(c.lastVisitAt) : "—"}
+                    </p>
+                  </div>
+                  {c.isWalkIn && <Badge tone="warning">Walk-in</Badge>}
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Most Active Customers */}
+        <section className="glass-card rounded-2xl p-5">
+          <div className="flex justify-between mb-4">
+            <h2 className="text-lg font-semibold text-white">Most Active Customers</h2>
+            <Link href="/customers" className="text-sm text-gold-400">
+              View all →
+            </Link>
+          </div>
+
+          {customerActivity.mostActiveCustomers.length === 0 ? (
+            <p className="text-dark-400 text-sm">No customer activity yet</p>
+          ) : (
+            <div className="space-y-3">
+              {customerActivity.mostActiveCustomers.map((c) => (
+                <div key={c.id} className="flex items-center justify-between bg-dark-900 rounded-xl p-3">
+                  <div>
+                    <p className="text-white font-medium">{c.name}</p>
+                    <p className="text-xs text-dark-400">{c.loyaltyPoints} loyalty points</p>
+                  </div>
+                  <Badge tone="success">{c.visitCount} visit{c.visitCount === 1 ? "" : "s"}</Badge>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
 
     </main>

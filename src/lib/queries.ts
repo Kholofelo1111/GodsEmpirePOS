@@ -85,6 +85,47 @@ export async function getDashboardStats(): Promise<DashboardStats> {
   };
 }
 
+export async function getCustomerActivityStats() {
+  const since = startOfToday();
+
+  const [todayRow] = await db
+    .select({ count: sql<number>`COUNT(DISTINCT ${sales.customerId})::int` })
+    .from(sales)
+    .where(gte(sales.createdAt, since));
+
+  const recentCustomers = await db
+    .select({
+      id: customers.id,
+      name: customers.name,
+      isWalkIn: customers.isWalkIn,
+      lastVisitAt: customers.lastVisitAt,
+      visitCount: customers.visitCount,
+    })
+    .from(customers)
+    .where(sql`${customers.lastVisitAt} IS NOT NULL`)
+    .orderBy(desc(customers.lastVisitAt))
+    .limit(6);
+
+  const mostActiveCustomers = await db
+    .select({
+      id: customers.id,
+      name: customers.name,
+      isWalkIn: customers.isWalkIn,
+      visitCount: customers.visitCount,
+      loyaltyPoints: customers.loyaltyPoints,
+    })
+    .from(customers)
+    .where(sql`${customers.visitCount} > 0`)
+    .orderBy(desc(customers.visitCount))
+    .limit(6);
+
+  return {
+    todayCustomers: todayRow?.count ?? 0,
+    recentCustomers,
+    mostActiveCustomers,
+  };
+}
+
 export async function getRecentSales(limit = 6) {
   return db
     .select({
@@ -245,6 +286,7 @@ export interface BusinessInfo {
   currency: string;
   vatRate: number;
   receiptFooter: string;
+  logoUrl?: string;
 }
 
 export const DEFAULT_BUSINESS: BusinessInfo = {
@@ -255,6 +297,7 @@ export const DEFAULT_BUSINESS: BusinessInfo = {
   currency: "ZAR",
   vatRate: 15,
   receiptFooter: "Thank you for shopping at God's Empire!",
+  logoUrl: "",
 };
 
 export async function getBusinessInfo(): Promise<BusinessInfo> {

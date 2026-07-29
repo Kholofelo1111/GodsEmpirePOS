@@ -5,9 +5,8 @@ import { and, asc, eq, ilike, or, sql } from "drizzle-orm";
 import { generateUniqueBarcode } from "@/lib/barcode";
 
 async function isBarcodeTaken(code: string): Promise<boolean> {
-  const existing = await db.select().from(products).where(eq(products.barcode, code));
-  console.log("BARCODE CHECK:", code, existing);
-  return existing.length > 0;
+  const [existing] = await db.select({ id: products.id }).from(products).where(eq(products.barcode, code));
+  return Boolean(existing);
 }
 
 export async function GET(req: NextRequest) {

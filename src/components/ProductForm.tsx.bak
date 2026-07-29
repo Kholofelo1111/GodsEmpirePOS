@@ -56,12 +56,6 @@ export default function ProductForm({
 }: ProductFormProps) {
   const router = useRouter();
   const [form, setForm] = useState<ProductFormValues>(initial);
-
-  useEffect(() => {
-    setForm(initial);
-    setError("");
-  }, [initial]);
-
   const [categories, setCategories] = useState<{ id: number; name: string }[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -73,7 +67,7 @@ export default function ProductForm({
       .catch(() => setCategories([]));
   }, []);
 
-  const set = (patch: Partial<ProductFormValues>) => setForm((prev) => ({ ...prev, ...patch }));
+  const set = (patch: Partial<ProductFormValues>) => setForm({ ...form, ...patch });
 
   const scanBarcode = async () => {
     try {
@@ -149,7 +143,6 @@ export default function ProductForm({
         throw new Error(data.error || "Could not save product");
       }
 
-      setForm(emptyProduct);
       router.push("/products");
       router.refresh();
     } catch (err) {

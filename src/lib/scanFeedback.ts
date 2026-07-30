@@ -1,3 +1,5 @@
+import { Capacitor } from "@capacitor/core";
+import { Haptics, ImpactStyle } from "@capacitor/haptics";
 /**
  * Feature 11 — scanner feedback: a short success beep (Web Audio, no audio
  * file needed) and a vibration pulse on devices that support it (Android
@@ -26,19 +28,23 @@ export function playScanBeep() {
   }
 }
 
-export function vibrateSuccess() {
+export async function vibrateSuccess() {
   try {
+    if (Capacitor.isNativePlatform()) {
+      await Haptics.impact({ style: ImpactStyle.Medium });
+      return;
+    }
     if (typeof navigator !== "undefined" && navigator.vibrate) {
       navigator.vibrate(80);
     }
   } catch {
-    /* vibration not available — non-fatal */
+    /* vibration not available */
   }
 }
 
-export function scanFeedback() {
+export async function scanFeedback() {
   playScanBeep();
-  vibrateSuccess();
+  await vibrateSuccess();
 }
 
 /**

@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning";
 import { Capacitor } from "@capacitor/core";
+import { Haptics, ImpactStyle } from "@capacitor/haptics";
 import { Camera } from "lucide-react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -98,6 +99,7 @@ export default function ProductForm({
       const code = barcodes[0].rawValue ?? "";
 
       set({ barcode: code });
+      await Haptics.impact({ style: ImpactStyle.Medium });
 
       try {
         const res = await fetch(`/api/barcode-lookup?barcode=${encodeURIComponent(code)}`);

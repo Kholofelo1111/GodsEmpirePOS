@@ -12,120 +12,51 @@ export default function InvoiceDetails({
   const invoiceRef = useRef<HTMLDivElement>(null);
 
 
-  
-async function downloadPDF() {
-  if (!invoice) return;
+  async function downloadPDF() {
+    if (!invoice) return;
 
-  const pdf = new jsPDF("p","mm","a4");
+    const pdf = new jsPDF("p", "mm", "a4");
 
-  const logo = new Image();
-  logo.src="/images/logo.png";
+    let y = 20;
 
-  await new Promise(resolve=>{
-    logo.onload=resolve;
-    logo.onerror=resolve;
-  });
+    pdf.setFontSize(22);
+    pdf.text("God's Empire POS", 20, y);
 
-  let y=18;
+    y += 10;
+    pdf.setFontSize(12);
+    pdf.text("Professional Tax Invoice", 20, y);
 
-  pdf.setFillColor(20,20,20);
-  pdf.rect(0,0,210,28,"F");
+    y += 15;
+    pdf.text(`Invoice: ${invoice.invoiceNumber}`, 20, y);
 
-  try{
-    pdf.addImage(logo,"PNG",10,4,18,18);
-  }catch{}
+    y += 8;
+    pdf.text(`Status: ${invoice.status}`, 20, y);
 
-  pdf.setTextColor(212,175,55);
-  pdf.setFont("helvetica","bold");
-  pdf.setFontSize(20);
-  pdf.text("GOD'S EMPIRE POS",105,12,{align:"center"});
+    y += 8;
+    pdf.text(`Customer: ${invoice.customerId ?? "Walk-in Customer"}`, 20, y);
 
-  pdf.setTextColor(255,255,255);
-  pdf.setFontSize(10);
-  pdf.text("TAX INVOICE",105,20,{align:"center"});
+    y += 15;
+    pdf.line(20, y, 190, y);
 
-  pdf.setTextColor(0,0,0);
-  pdf.setFontSize(11);
+    y += 10;
+    pdf.text(`Subtotal: R${Number(invoice.subtotal).toFixed(2)}`, 20, y);
 
-  y=38;
+    y += 8;
+    pdf.text(`VAT: R${Number(invoice.tax).toFixed(2)}`, 20, y);
 
-  pdf.text("Invoice",20,y);
-  pdf.text(invoice.invoiceNumber,60,y);
+    y += 8;
+    pdf.text(`Discount: R${Number(invoice.discount).toFixed(2)}`, 20, y);
 
-  pdf.text("Date",120,y);
-  pdf.text(new Date(invoice.createdAt).toLocaleDateString("en-ZA"),150,y);
+    y += 12;
+    pdf.setFontSize(16);
+    pdf.text(`TOTAL: R${Number(invoice.total).toFixed(2)}`, 20, y);
 
-  y+=8;
+    y += 20;
+    pdf.setFontSize(10);
+    pdf.text("Thank you for your business!", 20, y);
 
-  pdf.text("Customer",20,y);
-  pdf.text(invoice.customerName || "Walk-in Customer",60,y);
-
-  pdf.text("Status",120,y);
-  pdf.text(String(invoice.status).toUpperCase(),150,y);
-
-  y+=8;
-  pdf.line(15,y,195,y);
-
-  y+=10;
-
-  pdf.setFont("helvetica","bold");
-  pdf.text("#",20,y);
-  pdf.text("Product",30,y);
-  pdf.text("Qty",130,y);
-  pdf.text("Price",150,y);
-  pdf.text("Total",175,y);
-
-  y+=5;
-  pdf.line(15,y,195,y);
-
-  pdf.setFont("helvetica","normal");
-
-  (invoice.items||[]).forEach((item:any,index:number)=>{
-    y+=7;
-    pdf.text(String(index+1),20,y);
-    pdf.text((item.productName||"Unknown").substring(0,28),30,y);
-    pdf.text(String(item.quantity),132,y);
-    pdf.text(`R${Number(item.unitPrice).toFixed(2)}`,150,y);
-    pdf.text(`R${Number(item.totalPrice).toFixed(2)}`,175,y);
-
-    if(y>260){
-      pdf.addPage();
-      y=20;
-    }
-  });
-
-  y+=12;
-  pdf.line(120,y,195,y);
-
-  y+=8;
-  pdf.text("Subtotal",125,y);
-  pdf.text(`R${Number(invoice.subtotal).toFixed(2)}`,175,y);
-
-  y+=8;
-  pdf.text("VAT",125,y);
-  pdf.text(`R${Number(invoice.tax).toFixed(2)}`,175,y);
-
-  y+=8;
-  pdf.text("Discount",125,y);
-  pdf.text(`R${Number(invoice.discount).toFixed(2)}`,175,y);
-
-  y+=10;
-  pdf.setFont("helvetica","bold");
-  pdf.setFontSize(14);
-  pdf.text("TOTAL",125,y);
-  pdf.text(`R${Number(invoice.total).toFixed(2)}`,175,y);
-
-  y+=18;
-  pdf.setFontSize(10);
-  pdf.setFont("helvetica","normal");
-  pdf.text("Thank you for shopping with God's Empire POS.",20,y);
-
-  y+=6;
-  pdf.text("Generated: "+new Date().toLocaleString("en-ZA"),20,y);
-
-  pdf.save(`${invoice.invoiceNumber}.pdf`);
-}
-
+    pdf.save(`${invoice.invoiceNumber}.pdf`);
+  }
 
 
   useEffect(() => {

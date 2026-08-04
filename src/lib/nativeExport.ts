@@ -51,3 +51,38 @@ export async function saveWorkbook(
     url: result.uri,
   });
 }
+
+
+export async function downloadPdf(url: string, filename: string) {
+  if (!Capacitor.isNativePlatform()) {
+    window.open(url, "_blank");
+    return;
+  }
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Download failed");
+
+  const blob = await res.blob();
+
+  const reader = new FileReader();
+
+  const base64 = await new Promise<string>((resolve, reject) => {
+    reader.onerror = reject;
+    reader.onloadend = () => {
+      resolve((reader.result as string).split(",")[1]);
+    };
+    reader.readAsDataURL(blob);
+  });
+
+  const file = await Filesystem.writeFile({
+    path: filename,
+    data: base64,
+    directory: Directory.Documents,
+    recursive: true,
+  });
+
+  await Share.share({
+    title: filename,
+    url: file.uri,
+  });
+}

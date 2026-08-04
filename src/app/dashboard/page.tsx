@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   TrendingUp,
   DollarSign,
@@ -32,6 +33,11 @@ export const dynamic = "force-dynamic";
 
 export default async function Dashboard() {
   const user = await getCurrentUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
   const permissions = getPermissions(user.role);
 
 

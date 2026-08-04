@@ -4,8 +4,8 @@ import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning";
 import { Capacitor } from "@capacitor/core";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import jsPDF from "jspdf";
-import { downloadPdf } from "@/lib/nativeExport";
 import html2canvas from "html2canvas";
+import { savePdf } from "@/lib/nativeExport";
 import {
   Plus,
   Minus,
@@ -250,28 +250,11 @@ export default function POSPage() {
       // Snapshot the exact on-screen receipt node — this is the single source
       // of truth, so there is no separate layout to keep in sync.
       const scale = 3; // render at higher density so text/barcode stay crisp
-      const clone = receiptEl.cloneNode(true) as HTMLElement;
-      clone.style.background = "#ffffff";
-      clone.style.color = "#000000";
-      clone.querySelectorAll("*").forEach((el:any)=>{
-        el.style.color="#000000";
-        el.style.backgroundColor="transparent";
-        el.style.borderColor="#000000";
-        el.style.boxShadow="none";
-      });
-
-      clone.style.position="fixed";
-      clone.style.left="-10000px";
-      clone.style.top="0";
-      document.body.appendChild(clone);
-
-      const canvas = await html2canvas(clone,{
+      const canvas = await html2canvas(receiptEl, {
         scale,
-        backgroundColor:"#ffffff",
-        useCORS:true,
+        backgroundColor: "#ffffff",
+        useCORS: true, // allow the remote business logo to be captured
       });
-
-      document.body.removeChild(clone);
 
       const imgData = canvas.toDataURL("image/png");
 
@@ -288,11 +271,7 @@ export default function POSPage() {
       });
 
       pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-
-      await downloadPdf(
-        `/api/receipt/${completed.receiptNumber}/pdf`,
-        `${completed.receiptNumber}.pdf`
-      );
+      await savePdf(pdf, `${completed.receiptNumber}.pdf`);
     } catch (err) {
       console.error("Receipt PDF export failed:", err);
       alert("Could not generate receipt PDF.");

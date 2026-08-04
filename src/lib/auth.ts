@@ -379,7 +379,11 @@ export async function getCurrentUser(): Promise<SessionUser> {
     }
   }
 
-  return DEFAULT_USER;
+  if (process.env.NEXT_PHASE === "phase-production-build") {
+    return DEFAULT_USER;
+  }
+
+  throw new Error("Unauthorized: login required.");
 }
 
 /**
@@ -387,6 +391,11 @@ export async function getCurrentUser(): Promise<SessionUser> {
  */
 export async function requireRole(allowedRoles: UserRole[]): Promise<SessionUser> {
   const user = await getCurrentUser();
+
+  if (!user) {
+    throw new Error("Unauthorized: login required.");
+  }
+
   if (!allowedRoles.includes(user.role)) {
     throw new Error(`Forbidden: requires one of [${allowedRoles.join(", ")}], but user is '${user.role}'.`);
   }

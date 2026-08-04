@@ -1,0 +1,13 @@
+
+> build
+> next build --webpack
+
+  Skipping creating a lockfile at /data/data/com.termux/files/home/GodsEmpirePOS-Authentication/GodsEmpirePOS-Authentication-Merged/.next/lock because we're using WASM bindings
+▲ Next.js 16.2.6 (webpack)
+- Environments: .env.local
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 21.3s
+  Running TypeScript ...
+Error: invalid type: unit value, expected usize
+Next.js build worker exited with code: 1 and signal: null

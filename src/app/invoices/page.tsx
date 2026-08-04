@@ -1,0 +1,102 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import Link from "next/link";
+
+export default function InvoicesPage() {
+  const [invoices, setInvoices] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch("/api/invoices")
+      .then((r) => r.json())
+      .then(setInvoices)
+      .catch(console.error);
+  }, []);
+
+  const totalInvoices = invoices.length;
+  const paidInvoices = invoices.filter(i => i.status === "paid").length;
+  const pendingInvoices = invoices.filter(i => i.status === "pending" || i.status === "draft" || i.status === "sent").length;
+  const overdueInvoices = invoices.filter(i => i.status === "overdue").length;
+
+  return (
+
+    <main className="space-y-6 p-6">
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-3xl font-bold">Invoices</h1>
+          <p className="text-sm text-zinc-400">
+            Create, manage and print customer invoices.
+          </p>
+        </div>
+
+        <Link
+          href="/invoices/new"
+          className="rounded-lg bg-black px-5 py-3 text-white"
+        >
+          + New Invoice
+        </Link>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-4">
+
+        <div className="rounded-xl border p-5">
+          <div className="text-sm text-zinc-400">Total Invoices</div>
+          <div className="mt-2 text-3xl font-bold">{totalInvoices}</div>
+        </div>
+
+        <div className="rounded-xl border p-5">
+          <div className="text-sm text-zinc-400">Paid</div>
+          <div className="mt-2 text-3xl font-bold text-green-600">{paidInvoices}</div>
+        </div>
+
+        <div className="rounded-xl border p-5">
+          <div className="text-sm text-zinc-400">Pending</div>
+          <div className="mt-2 text-3xl font-bold text-orange-600">{pendingInvoices}</div>
+        </div>
+
+        <div className="rounded-xl border p-5">
+          <div className="text-sm text-zinc-400">Overdue</div>
+          <div className="mt-2 text-3xl font-bold text-red-600">{overdueInvoices}</div>
+        </div>
+
+      </div>
+
+      <div className="rounded-xl border">
+
+        <div className="border-b p-4 font-semibold">
+          Invoice List
+        </div>
+
+        <div className="overflow-x-auto">
+<table className="w-full">
+<thead className="border-b bg-zinc-900 text-zinc-200">
+<tr>
+<th className="p-3 text-left font-semibold">Invoice</th>
+<th className="p-3 text-left font-semibold">Status</th>
+<th className="p-3 text-right font-semibold">Total</th>
+<th className="p-3 text-left font-semibold">Created</th>
+</tr>
+</thead>
+<tbody>
+{invoices.length === 0 ? (
+<tr><td colSpan={4} className="p-8 text-center text-zinc-400">No invoices created yet.</td></tr>
+) : (
+invoices.map((invoice) => (
+<tr key={invoice.id} className="border-t border-zinc-800">
+<td className="p-3"><Link href={`/invoices/${invoice.id}`} className="text-blue-400 hover:underline">{invoice.invoiceNumber}</Link></td>
+<td className="p-3 capitalize">{invoice.status}</td>
+<td className="p-3 text-right font-semibold">R{Number(invoice.total).toFixed(2)}</td>
+<td className="p-3">{new Date(invoice.createdAt).toLocaleDateString()}</td>
+</tr>
+))
+)}
+</tbody>
+</table>
+</div>
+
+      </div>
+
+    </main>
+  );
+}

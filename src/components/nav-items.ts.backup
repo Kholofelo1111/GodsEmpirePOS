@@ -1,0 +1,50 @@
+import {
+  LayoutDashboard,
+  Package,
+  ShoppingCart,
+  BarChart3,
+  Users,
+  Truck,
+  Warehouse,
+  Settings,
+  ScanLine,
+  ArrowDownCircle,
+  Receipt,
+  FileText,
+  type LucideIcon,
+} from "lucide-react";
+
+export interface NavItem {
+  href: string;
+  label: string;
+  short: string;
+  icon: LucideIcon;
+}
+
+export const navItems: NavItem[] = [
+  { href: "/", label: "Dashboard", short: "Home", icon: LayoutDashboard },
+  { href: "/pos", label: "Point of Sale", short: "Sell", icon: ShoppingCart },
+  { href: "/scanner", label: "Barcode Scanner", short: "Scan", icon: ScanLine },
+  { href: "/products", label: "Products", short: "Items", icon: Package },
+  { href: "/inventory", label: "Inventory", short: "Stock", icon: Warehouse },
+  { href: "/stock-in", label: "Stock In", short: "Receive", icon: ArrowDownCircle },
+  { href: "/receipts", label: "Receipts", short: "Sales", icon: Receipt },
+  { href: "/invoices", label: "Invoices", short: "Invoice", icon: FileText },
+  { href: "/reports", label: "Reports", short: "Reports", icon: BarChart3 },
+  { href: "/customers", label: "Customers", short: "Clients", icon: Users },
+  { href: "/suppliers", label: "Suppliers", short: "Vendors", icon: Truck },
+  { href: "/settings", label: "Settings", short: "Setup", icon: Settings },
+];
+
+/** Items shown in the mobile bottom bar (the 5th slot is a "More" button). */
+export const mobileNavItems: NavItem[] = [
+  navItems[0], // Dashboard
+  navItems[1], // POS
+  navItems[2], // Scanner
+  navItems[3], // Products
+];
+
+export function isActivePath(pathname: string, href: string): boolean {
+  if (href === "/") return pathname === "/";
+  return pathname === href || pathname.startsWith(href + "/");
+}

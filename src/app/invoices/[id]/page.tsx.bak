@@ -1,0 +1,17 @@
+type Props = {
+  params: Promise<{ id: string }>;
+};
+
+export default async function InvoiceDetails({ params }: Props) {
+  const { id } = await params;
+
+  return (
+    <main className="p-6">
+      <h1 className="text-3xl font-bold">Invoice #{id}</h1>
+
+      <div className="mt-6 rounded-xl border p-6">
+        <p>Invoice details page coming next...</p>
+      </div>
+    </main>
+  );
+}

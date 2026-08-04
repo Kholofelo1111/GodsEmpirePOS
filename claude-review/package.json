@@ -1,0 +1,47 @@
+{
+  "name": "nextjs-postgresql-template",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build --webpack",
+    "start": "next start",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@capacitor-mlkit/barcode-scanning": "^8.1.0",
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/cli": "^8.4.2",
+    "@capacitor/core": "^8.4.2",
+    "@capacitor/haptics": "^8.0.2",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/uuid": "^10.0.0",
+    "bcryptjs": "^3.0.3",
+    "date-fns": "^4.4.0",
+    "dotenv": "17.3.1",
+    "drizzle-orm": "0.45.2",
+    "jose": "^6.2.4",
+    "jsbarcode": "^3.11.6",
+    "lucide-react": "^1.26.0",
+    "next": "16.2.6",
+    "pg": "8.20.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "recharts": "^3.10.0",
+    "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "4.1.17",
+    "@types/node": "22.19.15",
+    "@types/pg": "8.18.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "dotenv-cli": "^11.0.0",
+    "drizzle-kit": "0.31.10",
+    "eslint": "9.39.4",
+    "eslint-config-next": "16.2.6",
+    "postcss": "8.5.8",
+    "tailwindcss": "4.1.17",
+    "typescript": "5.9.3"
+  }
+}

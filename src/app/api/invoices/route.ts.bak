@@ -1,0 +1,35 @@
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/db";
+import { invoices, invoiceItems } from "@/db/schema";
+import { getCurrentUser } from "@/lib/auth";
+import { ensureOperator } from "@/lib/operator";
+
+export async function POST(req: NextRequest) {
+  try {
+    const user = await getCurrentUser();
+    const userId = await ensureOperator(user);
+
+    const body = await req.json();
+
+    return NextResponse.json({
+      success: true,
+      message: "Invoice API ready",
+      userId,
+      body,
+    });
+
+  } catch (error) {
+    console.error("Invoice draft error:", error);
+
+    return NextResponse.json(
+      { error: "Failed to save invoice draft" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function GET() {
+  return NextResponse.json({
+    status: "Invoice API working",
+  });
+}

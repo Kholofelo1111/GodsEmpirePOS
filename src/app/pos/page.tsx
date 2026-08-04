@@ -4,8 +4,7 @@ import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning";
 import { Capacitor } from "@capacitor/core";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import jsPDF from "jspdf";
-import { Filesystem, Directory } from "@capacitor/filesystem";
-import { Share } from "@capacitor/share";
+import { savePdf } from "@/lib/nativeExport";
 import html2canvas from "html2canvas";
 import {
   Plus,
@@ -289,22 +288,8 @@ export default function POSPage() {
       });
 
       pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-      if (Capacitor.isNativePlatform()) {
-        const data = pdf.output("datauristring").split(",")[1];
-        const file = `${completed.receiptNumber}.pdf`;
-        const result = await Filesystem.writeFile({
-          path: file,
-          data,
-          directory: Directory.Documents,
-          recursive: true,
-        });
-        await Share.share({
-          title: completed.receiptNumber,
-          url: result.uri,
-        });
-      } else {
-        pdf.save(`${completed.receiptNumber}.pdf`);
-      }
+
+      await savePdf(pdf, `${completed.receiptNumber}.pdf`);
     } catch (err) {
       console.error("Receipt PDF export failed:", err);
       alert("Could not generate receipt PDF.");

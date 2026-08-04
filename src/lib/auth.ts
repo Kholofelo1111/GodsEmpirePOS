@@ -362,7 +362,7 @@ export async function verifyToken(token: string): Promise<SessionUser | null> {
  * In local development, if no session cookie is present, it returns DEFAULT_USER
  * so development testing continues seamlessly without requiring repeated logins.
  */
-export async function getCurrentUser(): Promise<SessionUser> {
+export async function getCurrentUser(): Promise<SessionUser | null> {
   if (typeof window === "undefined") {
     try {
       const { cookies } = await import("next/headers");
@@ -379,11 +379,7 @@ export async function getCurrentUser(): Promise<SessionUser> {
     }
   }
 
-  if (process.env.NEXT_PHASE === "phase-production-build") {
-    return DEFAULT_USER;
-  }
-
-  throw new Error("Unauthorized: login required.");
+  return null;
 }
 
 /**

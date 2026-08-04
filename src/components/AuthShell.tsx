@@ -10,6 +10,10 @@ export default async function AuthShell({
 }) {
   const user = await getCurrentUser();
 
+  if (!user) {
+    redirect("/login");
+  }
+
   return (
     <AppShell user={user}>
       {children}

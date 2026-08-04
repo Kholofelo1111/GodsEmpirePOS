@@ -63,6 +63,13 @@ export async function GET(req: NextRequest) {
       .orderBy(asc(products.name));
 
     const user = await getCurrentUser();
+    if (!user) {
+      return Response.json(
+        { error: "Unauthorized: login required" },
+        { status: 401 }
+      );
+    }
+
     const sanitizedRows = sanitizeProductsForRole(rows, user.role);
 
     return NextResponse.json(sanitizedRows);

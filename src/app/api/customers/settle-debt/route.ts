@@ -8,6 +8,13 @@ import { ensureOperator } from "@/lib/operator";
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser();
+    if (!user) {
+      return Response.json(
+        { error: "Unauthorized: login required" },
+        { status: 401 }
+      );
+    }
+
     const userId = await ensureOperator(user);
 
     const body = await req.json();

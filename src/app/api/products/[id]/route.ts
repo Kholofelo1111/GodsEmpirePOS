@@ -14,6 +14,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "Product not found" }, { status: 404 });
     }
     const user = await getCurrentUser();
+    if (!user) {
+      return Response.json(
+        { error: "Unauthorized: login required" },
+        { status: 401 }
+      );
+    }
+
     const sanitizedProduct = sanitizeProductForRole(product, user.role);
     return NextResponse.json(sanitizedProduct);
   } catch {
@@ -79,6 +86,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     // Record a manual adjustment when stock is edited directly.
     if (newStock !== existing.stock) {
       const user = await getCurrentUser();
+    if (!user) {
+      return Response.json(
+        { error: "Unauthorized: login required" },
+        { status: 401 }
+      );
+    }
+
       const userId = await ensureOperator(user);
       await db.insert(inventoryLogs).values({
         productId,
@@ -102,6 +116,13 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
 export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const user = await getCurrentUser();
+    if (!user) {
+      return Response.json(
+        { error: "Unauthorized: login required" },
+        { status: 401 }
+      );
+    }
+
     if (!canDeleteProducts(user.role)) {
       return NextResponse.json(
         { error: "Forbidden: Only Store Owner / Administrator can delete products." },

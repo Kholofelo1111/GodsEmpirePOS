@@ -4,3 +4,9 @@ android/.gradle
 android/app/build
 out
 .vercel
+*.bak
+*.debug
+scanner.txt
+drizzle/
+drizzle.config.json.bak
+insert-lifebuoy.js

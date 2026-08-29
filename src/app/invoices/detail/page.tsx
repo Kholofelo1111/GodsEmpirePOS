@@ -1,16 +1,38 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import jsPDF from "jspdf";
+import { savePdf } from "@/lib/nativeExport";
 
-export default function InvoiceDetails({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
+/**
+ * Was src/app/invoices/[id]/page.tsx. Next.js static export (used for the
+ * Capacitor build — see next.config.ts / build:capacitor) requires
+ * generateStaticParams() for any dynamic route segment, because it needs
+ * to pre-render one HTML file per possible value. Invoice IDs are
+ * unbounded and created continuously, so there is no fixed list to
+ * enumerate — a dynamic [id] segment is fundamentally incompatible with
+ * a static export, not just missing a config option.
+ *
+ * Fix: move the id into a query parameter instead of a path segment. This
+ * is still exactly one static page (no per-invoice files needed), and the
+ * actual data fetching was already 100% client-side (`fetch` inside
+ * useEffect, "use client"), so this is a routing change only — no change
+ * to how the invoice is loaded, rendered, or exported. Works identically
+ * on the normal web/Vercel build, since that page was never
+ * server-rendering the invoice content either.
+ *
+ * useSearchParams() requires a Suspense boundary in the App Router (with
+ * or without static export) — hence the wrapper component below.
+ */
+
+function InvoiceDetailsInner() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id");
+
   const [invoice, setInvoice] = useState<any>(null);
+  const [notFound, setNotFound] = useState(false);
   const invoiceRef = useRef<HTMLDivElement>(null);
-
 
   async function downloadPDF() {
     if (!invoice) return;
@@ -55,18 +77,28 @@ export default function InvoiceDetails({
     pdf.setFontSize(10);
     pdf.text("Thank you for your business!", 20, y);
 
-    pdf.save(`${invoice.invoiceNumber}.pdf`);
+    await savePdf(pdf, `${invoice.invoiceNumber}.pdf`);
   }
 
-
   useEffect(() => {
+    if (!id) {
+      setNotFound(true);
+      return;
+    }
     (async () => {
-      const { id } = await params;
       const res = await fetch(`/api/invoices/${id}`);
+      if (!res.ok) {
+        setNotFound(true);
+        return;
+      }
       const data = await res.json();
       setInvoice(data);
     })();
-  }, [params]);
+  }, [id]);
+
+  if (notFound) {
+    return <main className="p-6">Invoice not found.</main>;
+  }
 
   if (!invoice) {
     return <main className="p-6">Loading invoice...</main>;
@@ -162,7 +194,7 @@ export default function InvoiceDetails({
             </thead>
 
             <tbody>
-              {invoice.items?.map((item:any) => (
+              {invoice.items?.map((item: any) => (
                 <tr key={item.id} className="border-t border-zinc-800">
                   <td className="p-3">
                     {item.productName ?? "Unknown Product"}
@@ -225,5 +257,12 @@ export default function InvoiceDetails({
       </div>
     </main>
   );
+}
 
+export default function InvoiceDetails() {
+  return (
+    <Suspense fallback={<main className="p-6">Loading invoice...</main>}>
+      <InvoiceDetailsInner />
+    </Suspense>
+  );
 }

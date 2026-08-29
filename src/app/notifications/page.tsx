@@ -1,13 +1,19 @@
-import { db } from "@/db";
-import { notifications } from "@/db/schema";
-import { desc } from "drizzle-orm";
-import { Bell } from "lucide-react";
+"use client";
 
-export default async function NotificationsPage() {
-  const alerts = await db
-    .select()
-    .from(notifications)
-    .orderBy(desc(notifications.createdAt));
+import { useState, useEffect } from "react";
+import { Bell, AlertCircle } from "lucide-react";
+import Spinner from "@/components/ui/Spinner";
+
+export default function NotificationsPage() {
+  const [alerts, setAlerts] = useState<any[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/notifications")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then(setAlerts)
+      .catch(() => setFailed(true));
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -16,11 +22,26 @@ export default async function NotificationsPage() {
         <h1 className="text-2xl font-bold text-white">Notifications</h1>
       </div>
 
-      {alerts.length === 0 ? (
+      {failed && (
+        <div className="glass-card rounded-2xl p-6 flex items-center gap-3 text-orange-300">
+          <AlertCircle className="w-5 h-5 flex-shrink-0" />
+          Internet connection required to load notifications.
+        </div>
+      )}
+
+      {!failed && !alerts && (
+        <div className="py-12">
+          <Spinner label="Loading notifications..." />
+        </div>
+      )}
+
+      {!failed && alerts && alerts.length === 0 && (
         <div className="glass-card rounded-2xl p-6 text-dark-400">
           No notifications yet.
         </div>
-      ) : (
+      )}
+
+      {!failed && alerts && alerts.length > 0 && (
         <div className="space-y-3">
           {alerts.map((alert) => (
             <div

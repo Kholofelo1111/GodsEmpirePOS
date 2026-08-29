@@ -4,6 +4,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import jsPDF from "jspdf";
 import JsBarcode from "jsbarcode";
 import QRCodeLib from "qrcode";
+import { Capacitor } from "@capacitor/core";
+import { savePdf } from "@/lib/nativeExport";
 import { Receipt, Printer, Eye, Banknote, CreditCard, Share2, FileDown } from "lucide-react";
 import PageHeader from "@/components/ui/PageHeader";
 import SearchInput from "@/components/ui/SearchInput";
@@ -208,7 +210,7 @@ export default function ReceiptsPage() {
 
     y += 30;
 
-    pdf.save(`${detail.receiptNumber}.pdf`);
+    await savePdf(pdf, `${detail.receiptNumber}.pdf`);
 
   }
 
@@ -264,6 +266,14 @@ export default function ReceiptsPage() {
     pdf.text(business?.name ?? "God's Empire", 40, 10, { align: "center" });
     pdf.text(`Receipt: ${detail.receiptNumber}`, 5, 20);
     pdf.text(`Total: ${money(detail.total)}`, 5, 26);
+
+    // On Android, the Web Share API's File support is unreliable inside the
+    // Capacitor WebView, so route through the native Filesystem + Share
+    // plugins instead (same mechanism used for the "Save PDF" button).
+    if (Capacitor.isNativePlatform()) {
+      await savePdf(pdf, `${detail.receiptNumber}.pdf`);
+      return;
+    }
 
     const blob = pdf.output("blob");
     const file = new File(

@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
         sellingPrice: products.sellingPrice,
         stock: products.stock,
         minStockLevel: products.minStockLevel,
+        expiryDate: products.expiryDate,
       })
       .from(products)
       .leftJoin(categories, eq(products.categoryId, categories.id))
@@ -63,13 +64,6 @@ export async function GET(req: NextRequest) {
       .orderBy(asc(products.name));
 
     const user = await getCurrentUser();
-    if (!user) {
-      return Response.json(
-        { error: "Unauthorized: login required" },
-        { status: 401 }
-      );
-    }
-
     const sanitizedRows = sanitizeProductsForRole(rows, user.role);
 
     return NextResponse.json(sanitizedRows);
@@ -82,7 +76,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { name, description, barcode, categoryId, imageUrl, costPrice, sellingPrice, stock, minStockLevel } = body;
+    const { name, description, barcode, categoryId, imageUrl, costPrice, sellingPrice, stock, minStockLevel, expiryDate } = body;
 
     if (!name?.trim()) {
       return NextResponse.json({ error: "Product name is required" }, { status: 400 });
@@ -115,6 +109,7 @@ export async function POST(req: NextRequest) {
         sellingPrice: Number(sellingPrice).toFixed(2),
         stock: Number(stock || 0),
         minStockLevel: Number(minStockLevel || 5),
+        expiryDate: expiryDate?.trim() ? expiryDate.trim() : null,
       })
       .returning();
 

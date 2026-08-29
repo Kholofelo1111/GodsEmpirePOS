@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { provisionLocalSession, verifyLocalLogin, setCurrentLocalSession } from "@/lib/offline/localAuth";
+import { installApiBridge } from "@/lib/offline/apiBridge";
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");
@@ -8,18 +10,47 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    installApiBridge();
+  }, []);
+
   async function login(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
+    await installApiBridge();
 
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ username, password }),
-    });
+    let res: Response;
+    try {
+      res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, password }),
+      });
+    } catch {
+      // Could not reach the server at all — try the local, on-device
+      // credential check instead (see the offline-auth architecture
+      // report for what this does and does not verify while offline).
+      const result = await verifyLocalLogin(username, password);
+      setLoading(false);
+
+      if (!result.ok) {
+        setError(
+          result.reason === "not_provisioned"
+            ? "No offline login is available for this account on this device yet — log in online at least once first."
+            : result.reason === "inactive"
+            ? "This account was deactivated as of its last online login."
+            : "Incorrect username or password."
+        );
+        return;
+      }
+
+      setCurrentLocalSession(result.user);
+      window.location.href = "/";
+      return;
+    }
 
     const data = await res.json();
 
@@ -28,6 +59,15 @@ export default function LoginPage() {
     if (!res.ok) {
       setError(data.error || "Login failed");
       return;
+    }
+
+    // Provision (or refresh) this device's offline login capability, and
+    // remember this as the current session for a future offline cold
+    // start. Never sends the password anywhere — only derives a local
+    // hash in-browser.
+    if (data.user) {
+      provisionLocalSession(data.user, password).catch(() => {});
+      setCurrentLocalSession(data.user);
     }
 
     window.location.href = "/";

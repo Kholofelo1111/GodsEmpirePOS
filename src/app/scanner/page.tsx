@@ -335,7 +335,7 @@ export default function ScannerPage() {
                   <ShoppingCart className="w-4 h-4" /> Sell
                 </Link>
                 <Link
-                  href={`/products/${result.id}/edit`}
+                  href={`/products/edit?id=${result.id}`}
                   className="flex-1 py-2.5 bg-dark-800 text-dark-200 text-sm font-medium rounded-xl text-center hover:bg-dark-700 transition-colors"
                 >
                   Edit

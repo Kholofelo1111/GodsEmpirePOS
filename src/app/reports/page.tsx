@@ -1,22 +1,22 @@
+"use client";
+
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import { TrendingUp, Receipt, ShoppingBag, BarChart3, Package, Snail, Users, CreditCard } from "lucide-react";
+import { TrendingUp, Receipt, ShoppingBag, BarChart3, Package, Snail, Users, CreditCard, AlertCircle } from "lucide-react";
 import StatCard from "@/components/ui/StatCard";
 import EmptyState from "@/components/ui/EmptyState";
 import Badge from "@/components/ui/Badge";
-import {
-  getPeriodSummary,
+import Spinner from "@/components/ui/Spinner";
+import { money, compactMoney } from "@/lib/format";
+import ReportExportActions from "@/components/ReportExportActions";
+import type {
+  PeriodSummary,
   getDailyTrend,
   getBestSellers,
   getSlowMovers,
   getDashboardStats,
   getCustomerActivityStats,
-  startOfToday,
-  daysAgo,
 } from "@/lib/queries";
-import { money, compactMoney } from "@/lib/format";
-import ReportExportActions from "@/components/ReportExportActions";
-
-export const dynamic = "force-dynamic";
 
 const PERIODS = {
   daily: { label: "Today", days: 1 },
@@ -26,27 +26,53 @@ const PERIODS = {
 
 type PeriodKey = keyof typeof PERIODS;
 
-export default async function ReportsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ period?: string }>;
-}) {
-  const params = await searchParams;
-  const period: PeriodKey =
-    params.period === "weekly" || params.period === "monthly" ? params.period : "daily";
-  const { days, label } = PERIODS[period];
-  const since = days === 1 ? startOfToday() : daysAgo(days - 1);
+// Derived from the actual query functions — see the same pattern/reasoning
+// in dashboard/page.tsx.
+interface ReportsData {
+  period: PeriodKey;
+  label: string;
+  summary: PeriodSummary;
+  trend: Awaited<ReturnType<typeof getDailyTrend>>;
+  best: Awaited<ReturnType<typeof getBestSellers>>;
+  slow: Awaited<ReturnType<typeof getSlowMovers>>;
+  stats: Awaited<ReturnType<typeof getDashboardStats>>;
+  customerActivity: Awaited<ReturnType<typeof getCustomerActivityStats>>;
+}
 
-  const [summary, trend, best, slow, stats, customerActivity] = await Promise.all([
-    getPeriodSummary(since),
-    getDailyTrend(days === 1 ? 7 : days === 7 ? 7 : 14),
-    getBestSellers(since, 5),
-    getSlowMovers(since, 5),
-    getDashboardStats(),
-    getCustomerActivityStats(),
-  ]);
+export default function ReportsPage() {
+  const [period, setPeriod] = useState<PeriodKey>("daily");
+  const [data, setData] = useState<ReportsData | null>(null);
+  const [failed, setFailed] = useState(false);
 
-  const maxTrend = Math.max(...trend.map((t) => t.total), 1);
+  useEffect(() => {
+    setData(null);
+    setFailed(false);
+    fetch(`/api/reports?period=${period}`)
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then(setData)
+      .catch(() => setFailed(true));
+  }, [period]);
+
+  if (failed) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center">
+        <AlertCircle className="w-10 h-10 text-orange-400 mb-3" />
+        <p className="text-white font-medium">Internet connection required</p>
+        <p className="text-dark-400 text-sm mt-1">Reports need a live connection to load.</p>
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="py-24">
+        <Spinner label="Loading reports..." />
+      </div>
+    );
+  }
+
+  const { summary, trend, best, slow, stats, customerActivity, label } = data;
+  const maxTrend = Math.max(...trend.map((t: { total: number }) => t.total), 1);
   const margin = summary.revenue > 0 ? Math.round((summary.profit / summary.revenue) * 100) : 0;
 
   return (
@@ -67,9 +93,9 @@ export default async function ReportsPage({
           />
           <div className="flex gap-2">
             {(Object.keys(PERIODS) as PeriodKey[]).map((key) => (
-              <Link
+              <button
                 key={key}
-                href={`/reports?period=${key}`}
+                onClick={() => setPeriod(key)}
                 className={`px-4 py-2 rounded-xl text-sm font-medium capitalize transition-all ${
                   period === key
                     ? "gold-gradient text-dark-950"
@@ -77,7 +103,7 @@ export default async function ReportsPage({
                 }`}
               >
                 {key}
-              </Link>
+              </button>
             ))}
           </div>
         </div>

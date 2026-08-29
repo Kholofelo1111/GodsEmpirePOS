@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import ProductPicker, { Product } from "./ProductPicker";
+import BarcodeScanner from "@/components/scanner/BarcodeScanner";
 import {
   InvoiceItem,
   InvoiceItemsTableProps,
@@ -16,6 +17,8 @@ export default function InvoiceItemsTable({
   setVatEnabled,
 }: InvoiceItemsTableProps) {
   const [showPicker, setShowPicker] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanStatus, setScanStatus] = useState("");
 
   function addProduct(product: Product) {
     const existing = items.find((i) => i.id === product.id);
@@ -39,6 +42,25 @@ export default function InvoiceItemsTable({
     }
 
     setShowPicker(false);
+  }
+
+  async function handleScannedBarcode(code: string) {
+    try {
+      const res = await fetch(`/api/products?barcode=${encodeURIComponent(code)}`);
+      const matches: Product[] = res.ok ? await res.json() : [];
+      const product = matches[0];
+
+      if (!product) {
+        setScanStatus(`No product found for barcode ${code}`);
+        return;
+      }
+
+      addProduct(product);
+      setScanStatus(`Added: ${product.name}`);
+    } catch (err) {
+      console.error("Barcode lookup failed:", err);
+      setScanStatus("Barcode lookup failed — check your connection and try again.");
+    }
   }
 
 
@@ -79,6 +101,23 @@ export default function InvoiceItemsTable({
         <ProductPicker onSelect={addProduct} />
       )}
 
+      {scanStatus && (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-700 bg-[#10131d] px-4 py-2 text-sm text-gray-300">
+          <span>{scanStatus}</span>
+          <button onClick={() => setScanStatus("")} className="text-gray-500 hover:text-gray-300">
+            ✕
+          </button>
+        </div>
+      )}
+
+      <BarcodeScanner
+        open={showScanner}
+        onClose={() => setShowScanner(false)}
+        onScan={handleScannedBarcode}
+        title="Scan Product Barcode"
+        hint="Scan another item, or close when done."
+      />
+
       <div className="rounded-2xl border border-gray-700 bg-[#10131d] shadow-xl overflow-hidden">
 
         <div className="flex items-center justify-between border-b p-4">
@@ -87,12 +126,20 @@ export default function InvoiceItemsTable({
             Invoice Items
           </h2>
 
-          <button
-            onClick={() => setShowPicker(!showPicker)}
-            className="rounded-lg border px-4 py-2 hover:bg-gray-100"
-          >
-            {showPicker ? "Close" : "+ Add Product"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowScanner(true)}
+              className="rounded-lg border px-4 py-2 hover:bg-gray-100"
+            >
+              Scan Barcode
+            </button>
+            <button
+              onClick={() => setShowPicker(!showPicker)}
+              className="rounded-lg border px-4 py-2 hover:bg-gray-100"
+            >
+              {showPicker ? "Close" : "+ Add Product"}
+            </button>
+          </div>
 
         </div>
 

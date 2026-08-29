@@ -37,9 +37,6 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules",
-    ".next",
-    "claude-review",
-    "claude_fix"
+    "node_modules"
   ]
 }

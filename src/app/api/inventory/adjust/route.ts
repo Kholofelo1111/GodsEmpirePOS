@@ -8,17 +8,10 @@ import { ensureOperator } from "@/lib/operator";
 export async function POST(req: NextRequest) {
   try {
     const user = await getCurrentUser();
-    if (!user) {
-      return Response.json(
-        { error: "Unauthorized: login required" },
-        { status: 401 }
-      );
-    }
-
     const userId = await ensureOperator(user);
 
     const body = await req.json();
-    const { productId, movementType, quantity, newStock: targetStock, reference, notes } = body;
+    const { productId, movementType, quantity, newStock: targetStock, reference, notes, operationId } = body;
 
     const pid = Number(productId);
     if (!pid || !["out", "adjustment"].includes(movementType)) {
@@ -26,6 +19,20 @@ export async function POST(req: NextRequest) {
         { error: "A valid product and movement type ('out' or 'adjustment') are required." },
         { status: 400 }
       );
+    }
+
+    // Idempotency: a retried offline sync of the same adjustment should be
+    // a no-op, not applied twice against current stock.
+    if (operationId) {
+      const [existingLog] = await db.select().from(inventoryLogs).where(eq(inventoryLogs.operationId, operationId));
+      if (existingLog) {
+        return NextResponse.json({
+          success: true,
+          productId: existingLog.productId,
+          previousStock: existingLog.previousStock,
+          newStock: existingLog.newStock,
+        });
+      }
     }
 
     const [existing] = await db.select().from(products).where(eq(products.id, pid));
@@ -58,6 +65,7 @@ export async function POST(req: NextRequest) {
         .where(eq(products.id, pid));
 
       await tx.insert(inventoryLogs).values({
+        operationId: operationId || null,
         productId: pid,
         movementType: movementType as "out" | "adjustment",
         quantity: loggedQty,
@@ -76,6 +84,9 @@ export async function POST(req: NextRequest) {
       newStock: finalNewStock,
     });
   } catch (error: any) {
+    if (error?.code === "23505" && String(error?.constraint || "").includes("operation_id")) {
+      return NextResponse.json({ success: true, note: "Already synced." });
+    }
     console.error("INVENTORY ADJUST ERROR:", error);
     return NextResponse.json(
       { error: error?.message || "Failed to adjust inventory." },

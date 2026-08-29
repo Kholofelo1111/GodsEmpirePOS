@@ -84,7 +84,7 @@ export default function InvoicesPage() {
 ) : (
 invoices.map((invoice) => (
 <tr key={invoice.id} className="border-t border-zinc-800">
-<td className="p-3"><Link href={`/invoices/${invoice.id}`} className="text-blue-400 hover:underline">{invoice.invoiceNumber}</Link></td>
+<td className="p-3"><Link href={`/invoices/detail?id=${invoice.id}`} className="text-blue-400 hover:underline">{invoice.invoiceNumber}</Link></td>
 <td className="p-3 capitalize">{invoice.status}</td>
 <td className="p-3 text-right font-semibold">R{Number(invoice.total).toFixed(2)}</td>
 <td className="p-3">{new Date(invoice.createdAt).toLocaleDateString()}</td>

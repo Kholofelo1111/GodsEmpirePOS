@@ -157,7 +157,7 @@ export default function ProductsPage() {
                   </div>
                   <div className="flex gap-2 mt-3 pt-3 border-t border-dark-800">
                     <Link
-                      href={`/products/${p.id}/edit`}
+                      href={`/products/edit?id=${p.id}`}
                       className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg bg-dark-800 text-dark-200 text-sm hover:bg-dark-700 transition-colors"
                     >
                       <Edit2 className="w-4 h-4" /> Edit
@@ -224,7 +224,7 @@ export default function ProductsPage() {
                       <td className="px-6 py-3.5">
                         <div className="flex items-center justify-end gap-1">
                           <Link
-                            href={`/products/${p.id}/edit`}
+                            href={`/products/edit?id=${p.id}`}
                             className="p-2 rounded-lg text-dark-400 hover:text-gold-400 hover:bg-dark-800 transition-all"
                           >
                             <Edit2 className="w-4 h-4" />

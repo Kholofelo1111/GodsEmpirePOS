@@ -4,6 +4,7 @@ import React from "react";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import * as XLSX from "xlsx";
+import { savePdf, saveWorkbook } from "@/lib/nativeExport";
 import { Printer, FileDown, FileSpreadsheet } from "lucide-react";
 
 interface ReportExportActionsProps {
@@ -33,7 +34,7 @@ export default function ReportExportActions({
   outstandingBalance,
   bestSellers,
 }: ReportExportActionsProps) {
-const exportCSV = () => {
+const exportCSV = async () => {
   const wb = XLSX.utils.book_new();
 
   const summarySheet = XLSX.utils.aoa_to_sheet([
@@ -62,7 +63,7 @@ const exportCSV = () => {
 
   XLSX.utils.book_append_sheet(wb, bestSheet, "Best Sellers");
 
-  XLSX.writeFile(wb, `GodsEmpire_Report_${periodLabel.replace(/\s+/g,"_")}.xlsx`);
+  await saveWorkbook(wb, `GodsEmpire_Report_${periodLabel.replace(/\s+/g,"_")}.xlsx`);
 };
 
 
@@ -228,7 +229,7 @@ bestSellers.forEach((item,index)=>{
         win.onload=()=>win.print();
       }
     }else{
-      pdf.save(`GodsEmpire_Report_${periodLabel.replace(/\s+/g,"_")}.pdf`);
+      await savePdf(pdf, `GodsEmpire_Report_${periodLabel.replace(/\s+/g,"_")}.pdf`);
     }
   };
 

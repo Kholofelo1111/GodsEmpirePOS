@@ -8,7 +8,7 @@ import {
   users,
   settings,
 } from "@/db/schema";
-import { sql, gte, desc, eq, asc, and } from "drizzle-orm";
+import { sql, gte, lt, desc, eq, asc, and } from "drizzle-orm";
 
 /** Server-side data access shared by dashboard, reports and inventory pages. */
 
@@ -313,4 +313,207 @@ export async function getBusinessInfo(): Promise<BusinessInfo> {
   } catch {
     return DEFAULT_BUSINESS;
   }
+}
+
+export interface ExpirySettings {
+  /** Days before expiryDate that a product should count as "Expiring Soon". */
+  warningDays: number;
+}
+
+// Default warning period of 30 days ("1 month before expiry"), per the
+// requested example. Stored the same way as business_info so it can later
+// be exposed as a configurable setting from the same Settings screen.
+export const DEFAULT_EXPIRY_SETTINGS: ExpirySettings = {
+  warningDays: 30,
+};
+
+export async function getExpirySettings(): Promise<ExpirySettings> {
+  try {
+    const [row] = await db.select().from(settings).where(eq(settings.key, "expiry_warning"));
+    if (!row) return DEFAULT_EXPIRY_SETTINGS;
+    return { ...DEFAULT_EXPIRY_SETTINGS, ...(row.value as Partial<ExpirySettings>) };
+  } catch {
+    return DEFAULT_EXPIRY_SETTINGS;
+  }
+}
+
+export interface StaffPerformance {
+  userId: number;
+  totalSales: number;
+  totalRevenue: number;
+  todaySales: number;
+  todayRevenue: number;
+}
+
+/**
+ * One grouped query for all-time totals and one for today's totals — not a
+ * per-staff-member query loop — so this stays cheap regardless of headcount.
+ * Keyed by sales.userId, which is how sales are already linked to the
+ * staff member who made them (no separate "cashier" concept/table exists).
+ */
+export async function getStaffPerformance(): Promise<Map<number, StaffPerformance>> {
+  const since = startOfToday();
+
+  const totals = await db
+    .select({
+      userId: sales.userId,
+      count: sql<number>`COUNT(*)::int`,
+      revenue: sql<string>`COALESCE(SUM(${sales.total}), 0)`,
+    })
+    .from(sales)
+    .groupBy(sales.userId);
+
+  const todayTotals = await db
+    .select({
+      userId: sales.userId,
+      count: sql<number>`COUNT(*)::int`,
+      revenue: sql<string>`COALESCE(SUM(${sales.total}), 0)`,
+    })
+    .from(sales)
+    .where(gte(sales.createdAt, since))
+    .groupBy(sales.userId);
+
+  const result = new Map<number, StaffPerformance>();
+
+  for (const row of totals) {
+    result.set(row.userId, {
+      userId: row.userId,
+      totalSales: row.count,
+      totalRevenue: Number(row.revenue),
+      todaySales: 0,
+      todayRevenue: 0,
+    });
+  }
+
+  for (const row of todayTotals) {
+    const existing = result.get(row.userId);
+    if (existing) {
+      existing.todaySales = row.count;
+      existing.todayRevenue = Number(row.revenue);
+    } else {
+      result.set(row.userId, {
+        userId: row.userId,
+        totalSales: 0,
+        totalRevenue: 0,
+        todaySales: row.count,
+        todayRevenue: Number(row.revenue),
+      });
+    }
+  }
+
+  return result;
+}
+
+export interface CashUpPayment {
+  method: string;
+  amount: number;
+}
+
+export interface CashUpProductSold {
+  productId: number;
+  name: string;
+  quantity: number;
+  revenue: number;
+}
+
+export interface CashUpCashierRow {
+  userId: number;
+  name: string;
+  role: string;
+  transactions: number;
+  revenue: number;
+  cash: number;
+  card: number;
+  other: number;
+}
+
+export interface CashUpDay {
+  total: number;
+  transactions: number;
+  payments: CashUpPayment[];
+  productsSold: CashUpProductSold[];
+  cashierBreakdown: CashUpCashierRow[];
+}
+
+/**
+ * Register/cash-up summary for a single calendar day (server local time,
+ * consistent with startOfToday()/getPeriodSummary() elsewhere in this
+ * file). Reuses sales/saleItems/users directly — no separate cash-up
+ * table — and uses grouped SQL rather than a query per cashier/product.
+ */
+export async function getCashUpDay(dateStr: string): Promise<CashUpDay> {
+  const start = new Date(`${dateStr}T00:00:00`);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  const range = and(gte(sales.createdAt, start), lt(sales.createdAt, end));
+
+  const [totals] = await db
+    .select({
+      total: sql<string>`COALESCE(SUM(${sales.total}), 0)`,
+      transactions: sql<number>`COUNT(*)::int`,
+    })
+    .from(sales)
+    .where(range);
+
+  const paymentRows = await db
+    .select({
+      method: sales.paymentMethod,
+      amount: sql<string>`COALESCE(SUM(${sales.total}), 0)`,
+    })
+    .from(sales)
+    .where(range)
+    .groupBy(sales.paymentMethod);
+
+  const productRows = await db
+    .select({
+      productId: saleItems.productId,
+      name: products.name,
+      quantity: sql<number>`COALESCE(SUM(${saleItems.quantity}), 0)::int`,
+      revenue: sql<string>`COALESCE(SUM(${saleItems.totalPrice}), 0)`,
+    })
+    .from(saleItems)
+    .innerJoin(sales, eq(saleItems.saleId, sales.id))
+    .innerJoin(products, eq(saleItems.productId, products.id))
+    .where(range)
+    .groupBy(saleItems.productId, products.name)
+    .orderBy(desc(sql`SUM(${saleItems.totalPrice})`));
+
+  const cashierRows = await db
+    .select({
+      userId: sales.userId,
+      name: users.fullName,
+      displayName: users.displayName,
+      role: users.role,
+      transactions: sql<number>`COUNT(*)::int`,
+      revenue: sql<string>`COALESCE(SUM(${sales.total}), 0)`,
+      cash: sql<string>`COALESCE(SUM(${sales.total}) FILTER (WHERE ${sales.paymentMethod} = 'cash'), 0)`,
+      card: sql<string>`COALESCE(SUM(${sales.total}) FILTER (WHERE ${sales.paymentMethod} = 'card'), 0)`,
+      other: sql<string>`COALESCE(SUM(${sales.total}) FILTER (WHERE ${sales.paymentMethod} NOT IN ('cash', 'card')), 0)`,
+    })
+    .from(sales)
+    .innerJoin(users, eq(sales.userId, users.id))
+    .where(range)
+    .groupBy(sales.userId, users.fullName, users.displayName, users.role);
+
+  return {
+    total: Number(totals?.total ?? 0),
+    transactions: Number(totals?.transactions ?? 0),
+    payments: paymentRows.map((r) => ({ method: r.method, amount: Number(r.amount) })),
+    productsSold: productRows.map((r) => ({
+      productId: r.productId,
+      name: r.name,
+      quantity: r.quantity,
+      revenue: Number(r.revenue),
+    })),
+    cashierBreakdown: cashierRows.map((r) => ({
+      userId: r.userId,
+      name: r.displayName || r.name,
+      role: r.role,
+      transactions: r.transactions,
+      revenue: Number(r.revenue),
+      cash: Number(r.cash),
+      card: Number(r.card),
+      other: Number(r.other),
+    })),
+  };
 }

@@ -21,6 +21,7 @@ export interface ProductFormValues {
   sellingPrice: string;
   stock: string;
   minStockLevel: string;
+  expiryDate: string;
 }
 
 export const emptyProduct: ProductFormValues = {
@@ -33,6 +34,7 @@ export const emptyProduct: ProductFormValues = {
   sellingPrice: "",
   stock: "0",
   minStockLevel: "5",
+  expiryDate: "",
 };
 
 interface ProductFormProps {
@@ -312,6 +314,15 @@ export default function ProductForm({
               value={form.minStockLevel}
               onChange={(e) => set({ minStockLevel: e.target.value })}
               min="0"
+              className={inputClass}
+            />
+          </Field>
+
+          <Field label="Expiry date" hint="Optional — leave blank if not applicable">
+            <input
+              type="date"
+              value={form.expiryDate}
+              onChange={(e) => set({ expiryDate: e.target.value })}
               className={inputClass}
             />
           </Field>

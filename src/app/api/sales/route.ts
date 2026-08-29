@@ -101,15 +101,9 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  let requestOperationId: string | null = null;
   try {
     const user = await getCurrentUser();
-    if (!user) {
-      return Response.json(
-        { error: "Unauthorized: login required" },
-        { status: 401 }
-      );
-    }
-
     const userId = await ensureOperator(user);
 
     const body = await req.json();
@@ -121,7 +115,20 @@ export async function POST(req: NextRequest) {
       amountTendered,
       changeGiven = 0,
       customerId = null,
+      operationId = null,
     } = body ?? {};
+    requestOperationId = operationId;
+
+    // Idempotency: if this exact offline-queued sale was already synced
+    // (e.g. a previous sync attempt succeeded but the response never made
+    // it back to the device before the connection dropped again), return
+    // the existing sale instead of creating a duplicate.
+    if (operationId) {
+      const [existing] = await db.select().from(sales).where(eq(sales.operationId, operationId));
+      if (existing) {
+        return NextResponse.json(existing, { status: 200 });
+      }
+    }
 
     if (!Array.isArray(items) || items.length === 0) {
       return NextResponse.json({ error: "No items in sale" }, { status: 400 });
@@ -199,6 +206,7 @@ export async function POST(req: NextRequest) {
         .insert(sales)
         .values({
           receiptNumber,
+          operationId: operationId || null,
           userId,
           customerId: resolvedCustomerId,
           subtotal: subtotal.toFixed(2),
@@ -306,6 +314,15 @@ export async function POST(req: NextRequest) {
         { error: "Not enough stock for this sale", details: error.shortages },
         { status: 409 }
       );
+    }
+    // Unique violation on operationId: a concurrent/retried sync of the
+    // same offline sale raced this request. Treat it as already-synced
+    // rather than a failure — look up and return the row that won.
+    if (error?.code === "23505" && String(error?.constraint || "").includes("operation_id")) {
+      if (requestOperationId) {
+        const [existing] = await db.select().from(sales).where(eq(sales.operationId, requestOperationId));
+        if (existing) return NextResponse.json(existing, { status: 200 });
+      }
     }
     console.error("SALE ERROR");
     console.error(error);

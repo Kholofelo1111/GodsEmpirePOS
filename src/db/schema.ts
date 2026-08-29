@@ -8,6 +8,7 @@ import {
   decimal,
   boolean,
   timestamp,
+  date,
   jsonb,
   pgEnum,
 } from "drizzle-orm/pg-core";
@@ -25,6 +26,10 @@ export const users = pgTable("users", {
   username: varchar("username", { length: 50 }).notNull().unique(),
   password: varchar("password", { length: 255 }).notNull(),
   fullName: varchar("full_name", { length: 100 }).notNull(),
+  // Optional short name shown on the POS/receipts and in the staff list,
+  // distinct from the full legal name. Nullable — existing users are
+  // unaffected and simply fall back to fullName wherever this is displayed.
+  displayName: varchar("display_name", { length: 100 }),
   role: userRoleEnum("role").notNull().default("owner"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
@@ -49,6 +54,12 @@ export const products = pgTable("products", {
   sellingPrice: decimal("selling_price", { precision: 10, scale: 2 }).notNull().default("0"),
   stock: integer("stock").notNull().default(0),
   minStockLevel: integer("min_stock_level").notNull().default(5),
+  // Manual, product-level expiry date (nullable — most products won't have
+  // one). Kept as a single column on `products` rather than a new table for
+  // now, per the "don't over-engineer" instruction; if batch-level expiry
+  // is needed later, this can become the default/fallback expiry for a
+  // product while a separate productBatches table carries per-batch dates.
+  expiryDate: date("expiry_date"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
@@ -82,6 +93,12 @@ export const suppliers = pgTable("suppliers", {
 export const sales = pgTable("sales", {
   id: serial("id").primaryKey(),
   receiptNumber: varchar("receipt_number", { length: 50 }).notNull().unique(),
+  // Client-generated idempotency key, set when a sale originates from the
+  // offline queue (see src/lib/offline). Nullable — sales made while
+  // online never had one before this column existed, and don't need one.
+  // Unique so a retried sync of the same offline sale is a no-op, not a
+  // duplicate sale.
+  operationId: varchar("operation_id", { length: 100 }).unique(),
   userId: integer("user_id").references(() => users.id).notNull(),
   customerId: integer("customer_id").references(() => customers.id),
   subtotal: decimal("subtotal", { precision: 12, scale: 2 }).notNull().default("0"),
@@ -130,6 +147,9 @@ export const stockIn = pgTable("stock_in", {
 
 export const inventoryLogs = pgTable("inventory_logs", {
   id: serial("id").primaryKey(),
+  // Same idempotency purpose as sales.operationId — lets a retried offline
+  // sync of the same stock adjustment be recognized and skipped.
+  operationId: varchar("operation_id", { length: 100 }).unique(),
   productId: integer("product_id").references(() => products.id).notNull(),
   movementType: stockMovementTypeEnum("movement_type").notNull(),
   quantity: integer("quantity").notNull(),

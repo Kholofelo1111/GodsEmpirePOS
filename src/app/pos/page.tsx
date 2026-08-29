@@ -3,9 +3,10 @@
 import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning";
 import { Capacitor } from "@capacitor/core";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
-import { savePdf } from "@/lib/nativeExport";
+import { downloadPdf } from "@/lib/nativeExport";
+import { useOfflineSync } from "@/lib/offline/useOfflineSync";
+import { cacheProducts, getCachedProducts, queueSale } from "@/lib/offline/db";
+import OfflineBadge from "@/components/offline/OfflineBadge";
 import {
   Plus,
   Minus,
@@ -28,7 +29,7 @@ import Spinner from "@/components/ui/Spinner";
 import { Field, inputClass, selectClass } from "@/components/ui/Field";
 import { money } from "@/lib/format";
 import type { BusinessInfo } from "@/lib/queries";
-import { scanFeedback, createScanDebouncer, createRetailScanTracker, useHardwareScanner } from "@/lib/scanFeedback";
+import { playScanBeep, vibrateSuccess, createScanDebouncer, createRetailScanTracker, useHardwareScanner } from "@/lib/scanFeedback";
 import Barcode from "@/components/Barcode";
 import QRCode from "@/components/QRCode";
 import Link from "next/link";
@@ -113,6 +114,7 @@ export default function POSPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const shouldProcessScan = useRef(createRetailScanTracker(700).canScan).current;
+  const { online, pending, syncing, refreshPendingCount } = useOfflineSync();
 
   const loadData = useCallback(async () => {
     try {
@@ -122,12 +124,23 @@ export default function POSPage() {
         fetch("/api/customers").then((r) => r.json()),
         fetch("/api/settings").then((r) => r.json()),
       ]);
-      setProducts(Array.isArray(p) ? p : []);
+      const productList = Array.isArray(p) ? p : [];
+      setProducts(productList);
       setCategories(Array.isArray(c) ? c : []);
       setCustomers(Array.isArray(cu) ? cu : []);
       setBusiness(s);
+      // Keep an offline-readable copy for when the network drops mid-shift.
+      cacheProducts(productList);
     } catch {
-      setError("Could not load products. Check your connection.");
+      // Network unreachable — fall back to the last cached product list so
+      // the till stays usable instead of showing an empty catalogue.
+      const cached = await getCachedProducts();
+      if (cached.length > 0) {
+        setProducts(cached as typeof products);
+        setError("Offline — showing last synced products. Prices/stock may be slightly out of date.");
+      } else {
+        setError("Could not load products. Check your connection.");
+      }
     } finally {
       setLoading(false);
     }
@@ -152,6 +165,7 @@ export default function POSPage() {
 
   const addToCart = (product: Product) => {
     if (product.stock <= 0) return;
+    playScanBeep();
     setCart((prev) => {
       const existing = prev.find((i) => i.id === product.id);
       if (existing) {
@@ -240,38 +254,14 @@ export default function POSPage() {
   const exportReceiptPDF = async () => {
     if (!completed) return;
 
-    const receiptEl = document.getElementById("receipt");
-    if (!receiptEl) {
-      alert("Could not generate receipt PDF.");
-      return;
-    }
-
     try {
-      // Snapshot the exact on-screen receipt node — this is the single source
-      // of truth, so there is no separate layout to keep in sync.
-      const scale = 3; // render at higher density so text/barcode stay crisp
-      const canvas = await html2canvas(receiptEl, {
-        scale,
-        backgroundColor: "#ffffff",
-        useCORS: true, // allow the remote business logo to be captured
-      });
-
-      const imgData = canvas.toDataURL("image/png");
-
-      // Size the PDF page to match the receipt's own aspect ratio (a narrow
-      // thermal-style slip) instead of forcing it onto an A4 page.
-      const pxToMm = 25.4 / 96; // 1 CSS px = 1/96 inch
-      const pdfWidth = (canvas.width / scale) * pxToMm;
-      const pdfHeight = (canvas.height / scale) * pxToMm;
-
-      const pdf = new jsPDF({
-        orientation: pdfHeight >= pdfWidth ? "portrait" : "landscape",
-        unit: "mm",
-        format: [pdfWidth, pdfHeight],
-      });
-
-      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-      await savePdf(pdf, `${completed.receiptNumber}.pdf`);
+      // The receipt PDF is generated server-side (see /api/receipt/[receiptNumber]/pdf)
+      // and fetched here, then saved/shared via the Capacitor Filesystem + Share
+      // plugins on Android (falls back to a normal browser download on web).
+      await downloadPdf(
+        `/api/receipt/${completed.receiptNumber}/pdf`,
+        `${completed.receiptNumber}.pdf`
+      );
     } catch (err) {
       console.error("Receipt PDF export failed:", err);
       alert("Could not generate receipt PDF.");
@@ -284,40 +274,29 @@ export default function POSPage() {
     setProcessing(true);
     setError("");
 
-    try {
-      const payments = buildPayments();
-      const paidAmt = paymentMethod === "cash" ? Math.min(total, tendered || total) : total;
-      const res = await fetch("/api/sales", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          items: cart.map((i) => ({
-            productId: i.id,
-            quantity: i.quantity,
-            unitPrice: i.price,
-            totalPrice: i.price * i.quantity,
-          })),
-          discount: discountValue,
-          vatAmount,
-          total,
-          paymentMethod,
-          payments,
-          amountTendered: paymentMethod === "cash" ? tendered : undefined,
-          changeGiven: paymentMethod === "cash" ? change : 0,
-          customerId: customerId ? Number(customerId) : null,
-          allowDebt: Boolean(customerId),
-        }),
-      });
+    const payments = buildPayments();
+    const paidAmt = paymentMethod === "cash" ? Math.min(total, tendered || total) : total;
+    const salePayload = {
+      items: cart.map((i) => ({
+        productId: i.id,
+        quantity: i.quantity,
+        unitPrice: i.price,
+        totalPrice: i.price * i.quantity,
+      })),
+      discount: discountValue,
+      vatAmount,
+      total,
+      paymentMethod,
+      payments,
+      amountTendered: paymentMethod === "cash" ? tendered : undefined,
+      changeGiven: paymentMethod === "cash" ? change : 0,
+      customerId: customerId ? Number(customerId) : null,
+      allowDebt: Boolean(customerId),
+    };
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        const detail = Array.isArray(data.details) && data.details.length > 0 ? `: ${data.details.join("; ")}` : "";
-        throw new Error((data.error || "Sale failed") + detail);
-      }
-
-      const sale = await res.json();
+    const finishLocally = (receiptNumber: string, cashierName: string, paymentsUsed: PaymentLeg[] = payments) => {
       setCompleted({
-        receiptNumber: sale.receiptNumber,
+        receiptNumber,
         items: cart,
         subtotal,
         vat: vatAmount,
@@ -327,11 +306,18 @@ export default function POSPage() {
         change: paymentMethod === "cash" ? change : 0,
         outstanding: Math.max(0, total - paidAmt),
         method: paymentMethod,
-        payments: sale.payments ?? payments,
-        cashierName: sale.cashierName ?? "Store Operator",
+        payments: paymentsUsed,
+        cashierName,
         at: new Date().toLocaleString("en-ZA"),
       });
-
+      // Optimistically reflect the sale in the on-screen catalogue so the
+      // next sale (still offline) doesn't oversell already-queued stock.
+      setProducts((prev) =>
+        prev.map((p) => {
+          const line = cart.find((c) => c.id === p.id);
+          return line ? { ...p, stock: Math.max(0, p.stock - line.quantity) } : p;
+        })
+      );
       setCart([]);
       setDiscount("");
       setAmountTendered("");
@@ -339,9 +325,56 @@ export default function POSPage() {
       setSplitCard("");
       setCustomerId("");
       setShowPayment(false);
+    };
+
+    // Offline (or the network is flaky enough that the request itself
+    // fails): queue the sale locally instead of blocking the till. This is
+    // single-device — no attempt is made to detect conflicts with sales
+    // made on another device while this one was offline.
+    if (!online) {
+      try {
+        await queueSale(salePayload);
+        await refreshPendingCount();
+        finishLocally(`OFFLINE-${Date.now()}`, "Store Operator (offline)");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not queue offline sale.");
+      } finally {
+        setProcessing(false);
+      }
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/sales", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(salePayload),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        const detail = Array.isArray(data.details) && data.details.length > 0 ? `: ${data.details.join("; ")}` : "";
+        throw new Error((data.error || "Sale failed") + detail);
+      }
+
+      const sale = await res.json();
+      finishLocally(sale.receiptNumber, sale.cashierName ?? "Store Operator", sale.payments ?? payments);
       loadData();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sale failed");
+      // The request itself failed to reach the server (not a validation
+      // error from it) — treat this the same as being offline rather than
+      // losing the sale.
+      if (err instanceof TypeError) {
+        try {
+          await queueSale(salePayload);
+          await refreshPendingCount();
+          finishLocally(`OFFLINE-${Date.now()}`, "Store Operator (offline)");
+        } catch (queueErr) {
+          setError(queueErr instanceof Error ? queueErr.message : "Sale failed and could not be queued.");
+        }
+      } else {
+        setError(err instanceof Error ? err.message : "Sale failed");
+      }
     } finally {
       setProcessing(false);
     }
@@ -358,7 +391,7 @@ export default function POSPage() {
         addToCart(product);
         setHighlightedId(product.id);
         setTimeout(() => setHighlightedId(null), 1500);
-        scanFeedback();
+        vibrateSuccess();
         setScannerError("");
         setUnknownBarcode("");
       } else {
@@ -464,10 +497,11 @@ export default function POSPage() {
   if (loading) return <Spinner label="Loading till..." />;
 
   return (
-    <div className="animate-fadeIn flex flex-col lg:flex-row gap-4 lg:h-[calc(100vh-8rem)]">
+    <div className="animate-fadeIn flex flex-col lg:flex-row gap-4 h-[calc(100vh-8rem)]">
       {/* Catalogue */}
       <div className="flex-1 flex flex-col min-h-0">
         <div className="space-y-3 mb-4">
+          <OfflineBadge online={online} pending={pending} syncing={syncing} />
           <button
             onClick={startScanner}
             className="flex items-center justify-center gap-2 w-full py-3 mb-3 gold-gradient text-dark-950 font-semibold rounded-xl"
@@ -517,7 +551,7 @@ export default function POSPage() {
           </div>
         </div>
 
-        <div className="flex-1 lg:overflow-y-auto">
+        <div className="flex-1 overflow-y-auto">
           {filtered.length === 0 ? (
             <EmptyState
               icon={<ShoppingBag className="w-6 h-6 text-dark-500" />}
@@ -565,7 +599,7 @@ export default function POSPage() {
       </div>
 
       {/* Cart */}
-      <div className="w-full lg:w-96 glass-card rounded-2xl flex flex-col lg:max-h-full">
+      <div className="w-full lg:w-96 glass-card rounded-2xl flex flex-col max-h-full">
         <div className="p-4 border-b border-dark-800 flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-white">Current Sale</h2>

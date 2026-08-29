@@ -1,17 +1,33 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import ProductForm, { emptyProduct, type ProductFormValues } from "@/components/ProductForm";
 import Spinner from "@/components/ui/Spinner";
 import EmptyState from "@/components/ui/EmptyState";
 import { PackageX } from "lucide-react";
 
-export default function EditProductPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = use(params);
+/**
+ * Was src/app/products/[id]/edit/page.tsx — converted to a query-param
+ * route for the same reason as invoices/detail/page.tsx (see that file's
+ * comment): a dynamic [id] segment needs generateStaticParams() for
+ * `output: "export"`, which isn't meaningful for an unbounded, constantly
+ * changing set of product IDs. Purely a routing change — the fetch/edit
+ * behavior is identical to before, on both the web and Capacitor builds.
+ */
+
+function EditProductInner() {
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id");
+
   const [initial, setInitial] = useState<ProductFormValues | null>(null);
   const [notFound, setNotFound] = useState(false);
 
   useEffect(() => {
+    if (!id) {
+      setNotFound(true);
+      return;
+    }
     fetch(`/api/products/${id}`)
       .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then((p) =>
@@ -26,6 +42,7 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
           sellingPrice: String(p.sellingPrice ?? ""),
           stock: String(p.stock ?? 0),
           minStockLevel: String(p.minStockLevel ?? 5),
+          expiryDate: p.expiryDate ?? "",
         })
       )
       .catch(() => setNotFound(true));
@@ -55,5 +72,13 @@ export default function EditProductPage({ params }: { params: Promise<{ id: stri
       method="PUT"
       productId={Number(id)}
     />
+  );
+}
+
+export default function EditProductPage() {
+  return (
+    <Suspense fallback={<Spinner label="Loading product..." />}>
+      <EditProductInner />
+    </Suspense>
   );
 }

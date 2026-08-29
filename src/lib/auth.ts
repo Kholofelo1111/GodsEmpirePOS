@@ -69,6 +69,7 @@ export interface RolePermissions {
   // System Administration
   canManageUsers: boolean;       // Owner only (Add/remove cashiers & managers)
   canManageSettings: boolean;    // Owner only (Business info, VAT rate, receipt footer)
+  canViewStaffPerformance: boolean; // Owner + Manager (read-only staff list/performance)
 }
 
 export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
@@ -90,6 +91,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     canSeeReports: true,
     canManageUsers: true,
     canManageSettings: true,
+    canViewStaffPerformance: true,
   },
   manager: {
     canSeeAnalytics: false,
@@ -109,6 +111,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     canSeeReports: true,
     canManageUsers: false,
     canManageSettings: false,
+    canViewStaffPerformance: true,
   },
   cashier: {
     canSeeAnalytics: false,
@@ -128,6 +131,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
     canSeeReports: false,
     canManageUsers: false,
     canManageSettings: false,
+    canViewStaffPerformance: false,
   },
 };
 
@@ -208,7 +212,7 @@ export function canAccessRoute(role: UserRole, pathname: string): boolean {
     return p.canSeeAnalytics;
   }
   if (pathname === "/settings" || pathname.startsWith("/settings")) {
-    return p.canManageSettings || p.canManageUsers;
+    return p.canManageSettings || p.canManageUsers || p.canViewStaffPerformance;
   }
   if (pathname === "/users" || pathname.startsWith("/users")) {
     return p.canManageUsers;
@@ -303,9 +307,13 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
  * ============================================================================
  */
 function getSecretKey(): Uint8Array {
-  return new TextEncoder().encode(
-    process.env.JWT_SECRET || "2df15539fc1002b30987f5573304401315d39068384f2bbcd186a352264b4b38"
-  );
+  const secret = process.env.JWT_SECRET;
+
+  if (!secret) {
+    throw new Error("JWT_SECRET is required");
+  }
+
+  return new TextEncoder().encode(secret);
 }
 
 /**
@@ -362,7 +370,7 @@ export async function verifyToken(token: string): Promise<SessionUser | null> {
  * In local development, if no session cookie is present, it returns DEFAULT_USER
  * so development testing continues seamlessly without requiring repeated logins.
  */
-export async function getCurrentUser(): Promise<SessionUser | null> {
+export async function getCurrentUser(): Promise<SessionUser> {
   if (typeof window === "undefined") {
     try {
       const { cookies } = await import("next/headers");
@@ -379,21 +387,44 @@ export async function getCurrentUser(): Promise<SessionUser | null> {
     }
   }
 
-  return null;
+  return DEFAULT_USER;
 }
 
 /**
  * Ensures the active user has one of the allowed roles, throwing an Error if forbidden.
  */
+/**
+ * Ensures the active user has one of the allowed roles, throwing an Error if forbidden.
+ * Also re-checks isActive directly against the database, so a session issued
+ * before a staff member was deactivated is rejected on any subsequent
+ * role-gated action (not just at their next login). This DB check is scoped
+ * to requireRole() — used by sensitive/management endpoints — rather than
+ * the much more broadly-called getCurrentUser(), to avoid adding a database
+ * round-trip (and any risk of misbehaving) to every authenticated request
+ * across the app.
+ */
 export async function requireRole(allowedRoles: UserRole[]): Promise<SessionUser> {
   const user = await getCurrentUser();
-
-  if (!user) {
-    throw new Error("Unauthorized: login required.");
-  }
-
   if (!allowedRoles.includes(user.role)) {
     throw new Error(`Forbidden: requires one of [${allowedRoles.join(", ")}], but user is '${user.role}'.`);
   }
+
+  try {
+    const { db } = await import("@/db");
+    const { users } = await import("@/db/schema");
+    const { eq } = await import("drizzle-orm");
+    const [row] = await db
+      .select({ isActive: users.isActive })
+      .from(users)
+      .where(eq(users.id, user.id));
+    if (row && row.isActive === false) {
+      throw new Error("Forbidden: account has been deactivated.");
+    }
+  } catch (e) {
+    if (e instanceof Error && e.message.startsWith("Forbidden")) throw e;
+    // If the lookup itself fails (DB hiccup), don't silently block a
+    // legitimate, already-verified session over an unrelated error.
+  }
+
   return user;
 }

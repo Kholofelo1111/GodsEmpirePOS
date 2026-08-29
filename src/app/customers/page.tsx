@@ -13,6 +13,7 @@ import { Field, inputClass, textareaClass } from "@/components/ui/Field";
 import { money, formatDate } from "@/lib/format";
 
 import jsPDF from "jspdf";
+import { savePdf } from "@/lib/nativeExport";
 
 
 interface Customer {
@@ -106,7 +107,7 @@ export default function CustomersPage() {
 
   };
 
-  const exportCustomerStatement = (printAfter = false) => {
+  const exportCustomerStatement = async (printAfter = false) => {
     if (!detail) return;
 
     const pdf = new jsPDF("p","mm","a4");
@@ -291,7 +292,8 @@ export default function CustomersPage() {
         win.onload=()=>win.print();
       }
     }else{
-      pdf.save(
+      await savePdf(
+        pdf,
         `Customer_${detail.name.replace(/\s+/g,"_")}.pdf`
       );
     }

@@ -16,7 +16,12 @@ export default function Header({ user, onMenuClick }: HeaderProps) {
   async function handleLogout() {
     await fetch("/api/auth/logout", {
       method: "POST",
-    });
+    }).catch(() => {});
+
+    // Clear the local "who's logged in" pointer too, so a later offline
+    // cold start doesn't silently resume this session on a shared device.
+    const { clearCurrentLocalSession } = await import("@/lib/offline/localAuth");
+    clearCurrentLocalSession();
 
     router.push("/login");
     router.refresh();

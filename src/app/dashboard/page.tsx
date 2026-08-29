@@ -1,5 +1,7 @@
+"use client";
+
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import {
   TrendingUp,
   DollarSign,
@@ -19,35 +21,63 @@ import {
 
 import StatCard from "@/components/ui/StatCard";
 import Badge from "@/components/ui/Badge";
-import {
+import Spinner from "@/components/ui/Spinner";
+import { money, formatTime } from "@/lib/format";
+import type { SessionUser, RolePermissions } from "@/lib/auth";
+import type {
   getDashboardStats,
   getRecentSales,
   getLowStockProducts,
   getCustomerActivityStats,
   getDailyTrend,
 } from "@/lib/queries";
-import { money, formatTime } from "@/lib/format";
-import { getCurrentUser, getPermissions } from "@/lib/auth";
 
-export const dynamic = "force-dynamic";
+// Types are derived directly from the actual query functions (type-only
+// import — erased at build time, no server code ends up in this client
+// bundle) so this can never silently drift from what /api/dashboard
+// really returns.
+interface DashboardData {
+  user: SessionUser;
+  permissions: RolePermissions;
+  stats: Awaited<ReturnType<typeof getDashboardStats>>;
+  recentSales: Awaited<ReturnType<typeof getRecentSales>>;
+  lowStock: Awaited<ReturnType<typeof getLowStockProducts>>;
+  customerActivity: Awaited<ReturnType<typeof getCustomerActivityStats>>;
+  trend: Awaited<ReturnType<typeof getDailyTrend>>;
+}
 
-export default async function Dashboard() {
-  const user = await getCurrentUser();
+export default function Dashboard() {
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [failed, setFailed] = useState(false);
 
-  if (!user) {
-    redirect("/login");
+  useEffect(() => {
+    fetch("/api/dashboard")
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
+      .then(setData)
+      .catch(() => setFailed(true));
+  }, []);
+
+  if (failed) {
+    return (
+      <main className="flex flex-col items-center justify-center py-24 text-center">
+        <AlertCircle className="w-10 h-10 text-orange-400 mb-3" />
+        <p className="text-white font-medium">Internet connection required</p>
+        <p className="text-dark-400 text-sm mt-1">
+          The dashboard needs a live connection to load. POS and Inventory still work offline.
+        </p>
+      </main>
+    );
   }
 
-  const permissions = getPermissions(user.role);
+  if (!data) {
+    return (
+      <main className="py-24">
+        <Spinner label="Loading dashboard..." />
+      </main>
+    );
+  }
 
-
-  const [stats, recentSales, lowStock, customerActivity, trend] = await Promise.all([
-    getDashboardStats(),
-    getRecentSales(5),
-    getLowStockProducts(5),
-    getCustomerActivityStats(),
-    getDailyTrend(7),
-  ]);
+  const { user, permissions, stats, recentSales, lowStock, customerActivity, trend } = data;
 
   const today = new Date().toLocaleDateString("en-ZA", {
     weekday: "long",

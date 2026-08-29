@@ -12,6 +12,7 @@ import {
   Settings2,
   CheckCircle,
   Truck,
+  ScanLine,
 } from "lucide-react";
 import PageHeader from "@/components/ui/PageHeader";
 import SearchInput from "@/components/ui/SearchInput";
@@ -20,8 +21,14 @@ import EmptyState from "@/components/ui/EmptyState";
 import Spinner from "@/components/ui/Spinner";
 import Badge from "@/components/ui/Badge";
 import Modal from "@/components/ui/Modal";
+import BarcodeScanner from "@/components/scanner/BarcodeScanner";
 import { Field, inputClass, selectClass, textareaClass } from "@/components/ui/Field";
 import { money, stockStatus, formatDateTime } from "@/lib/format";
+import { useOfflineSync } from "@/lib/offline/useOfflineSync";
+import { cacheProducts, getCachedProducts, queueStockAdjustment } from "@/lib/offline/db";
+import OfflineBadge from "@/components/offline/OfflineBadge";
+
+const WASTAGE_REASONS = ["Expired", "Damaged", "Customer Return", "Wastage", "Other"] as const;
 
 interface Product {
   id: number;
@@ -31,6 +38,7 @@ interface Product {
   sellingPrice: string;
   stock: number;
   minStockLevel: number;
+  expiryDate: string | null;
 }
 
 interface Movement {
@@ -53,7 +61,7 @@ interface Supplier {
   address: string | null;
 }
 
-type Tab = "stock" | "movements" | "suppliers";
+type Tab = "stock" | "movements" | "suppliers" | "expiry";
 type Filter = "all" | "low" | "out";
 
 export default function InventoryPage() {
@@ -73,19 +81,44 @@ export default function InventoryPage() {
   const [adjustRef, setAdjustRef] = useState("");
   const [adjustNotes, setAdjustNotes] = useState("");
   const [savingAdjust, setSavingAdjust] = useState(false);
+  const { online, pending, syncing, refreshPendingCount } = useOfflineSync();
   const [adjustError, setAdjustError] = useState("");
   const [success, setSuccess] = useState("");
 
+  // Quick find (search / scan) for the Stock Out / Adjust product picker —
+  // avoids scrolling the full 300+ item dropdown below.
+  const [productQuery, setProductQuery] = useState("");
+  const [productMatches, setProductMatches] = useState<Product[]>([]);
+  const [searchingProducts, setSearchingProducts] = useState(false);
+  const [showWastageScanner, setShowWastageScanner] = useState(false);
+  const [wastageReason, setWastageReason] = useState<typeof WASTAGE_REASONS[number]>("Expired");
+
+  // Expiry management (Phase 4/5): configurable warning period + savingWarn state.
+  const [warningDays, setWarningDays] = useState(30);
+  const [savingWarningDays, setSavingWarningDays] = useState(false);
+
   const load = useCallback(async () => {
     try {
-      const [p, m, s] = await Promise.all([
+      const [p, m, s, exp] = await Promise.all([
         fetch("/api/products").then((r) => r.json()),
         fetch("/api/inventory-logs").then((r) => r.json()),
         fetch("/api/suppliers").then((r) => r.json()),
+        fetch("/api/settings/expiry").then((r) => (r.ok ? r.json() : null)).catch(() => null),
       ]);
-      setProducts(Array.isArray(p) ? p : []);
+      const productList = Array.isArray(p) ? p : [];
+      setProducts(productList);
       setMovements(Array.isArray(m) ? m : []);
       setSuppliers(Array.isArray(s) ? s : []);
+      if (exp && Number.isFinite(exp.warningDays)) setWarningDays(exp.warningDays);
+      cacheProducts(productList);
+    } catch {
+      // Offline / unreachable — keep stock usable with the last cached
+      // snapshot instead of an empty list. Movements/suppliers aren't
+      // cached (read-only history, not needed to keep selling/adjusting).
+      const cached = await getCachedProducts();
+      if (cached.length > 0) {
+        setProducts(cached as typeof products);
+      }
     } finally {
       setLoading(false);
     }
@@ -95,24 +128,108 @@ export default function InventoryPage() {
     load();
   }, [load]);
 
+  // Debounced quick-find search for the Stock Out / Adjust product picker,
+  // reusing the existing /api/products?search= endpoint (matches name or
+  // barcode) instead of building new search logic.
+  useEffect(() => {
+    const term = productQuery.trim();
+    if (!term) {
+      setProductMatches([]);
+      return;
+    }
+    setSearchingProducts(true);
+    const t = setTimeout(() => {
+      fetch(`/api/products?search=${encodeURIComponent(term)}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((rows) => setProductMatches(Array.isArray(rows) ? rows.slice(0, 8) : []))
+        .catch(() => setProductMatches([]))
+        .finally(() => setSearchingProducts(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [productQuery]);
+
+  async function handleWastageScan(code: string) {
+    setShowWastageScanner(false);
+    try {
+      const res = await fetch(`/api/products?barcode=${encodeURIComponent(code)}`);
+      const matches: Product[] = res.ok ? await res.json() : [];
+      if (matches[0]) {
+        setAdjustProduct(matches[0]);
+        setProductQuery("");
+        setProductMatches([]);
+      } else {
+        setAdjustError(`No product found for barcode ${code}`);
+      }
+    } catch {
+      setAdjustError("Barcode lookup failed — check your connection and try again.");
+    }
+  }
+
   const handleAdjustSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!adjustProduct || !adjustQty) return;
     setSavingAdjust(true);
     setAdjustError("");
 
+    const reference =
+      adjustType === "out"
+        ? wastageReason === "Other"
+          ? adjustRef || "Other"
+          : wastageReason
+        : adjustRef || "Stock Adjustment";
+
+    const payload = {
+      productId: adjustProduct.id,
+      movementType: adjustType,
+      quantity: Number(adjustQty),
+      newStock: adjustType === "adjustment" ? Number(adjustQty) : undefined,
+      reference,
+      notes: adjustNotes || null,
+    };
+
+    const finishLocally = (message: string) => {
+      setSuccess(message);
+      setShowAdjust(false);
+      setAdjustProduct(null);
+      setAdjustQty("");
+      setAdjustRef("");
+      setAdjustNotes("");
+      setWastageReason("Expired");
+      setProductQuery("");
+      setProductMatches([]);
+      setTimeout(() => setSuccess(""), 6000);
+    };
+
+    // Offline: queue the adjustment and apply it optimistically to the
+    // on-screen stock figure so subsequent scans/searches reflect it
+    // immediately, even before it's synced. Single-device scope — no
+    // attempt to reconcile with adjustments made elsewhere meanwhile.
+    if (!online) {
+      try {
+        await queueStockAdjustment(payload);
+        await refreshPendingCount();
+        const qty = Number(adjustQty);
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === adjustProduct.id
+              ? { ...p, stock: adjustType === "adjustment" ? qty : Math.max(0, p.stock - qty) }
+              : p
+          )
+        );
+        finishLocally(`Queued offline: ${adjustProduct.name} stock update will sync when back online.`);
+      } catch (err) {
+        setAdjustError(err instanceof Error ? err.message : "Could not queue offline stock update.");
+      } finally {
+        setSavingAdjust(false);
+      }
+      return;
+    }
+
     try {
       const res = await fetch("/api/inventory/adjust", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          productId: adjustProduct.id,
-          movementType: adjustType,
-          quantity: Number(adjustQty),
-          newStock: adjustType === "adjustment" ? Number(adjustQty) : undefined,
-          reference: adjustRef || (adjustType === "out" ? "Wastage / Stock Out" : "Stock Adjustment"),
-          notes: adjustNotes || null,
-        }),
+        body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
@@ -121,18 +238,28 @@ export default function InventoryPage() {
       }
 
       const resData = await res.json();
-      setSuccess(
-        `Updated ${adjustProduct.name} stock: ${resData.previousStock} → ${resData.newStock}`
-      );
-      setShowAdjust(false);
-      setAdjustProduct(null);
-      setAdjustQty("");
-      setAdjustRef("");
-      setAdjustNotes("");
+      finishLocally(`Updated ${adjustProduct.name} stock: ${resData.previousStock} → ${resData.newStock}`);
       load();
-      setTimeout(() => setSuccess(""), 6000);
     } catch (err) {
-      setAdjustError(err instanceof Error ? err.message : "Could not adjust stock.");
+      if (err instanceof TypeError) {
+        try {
+          await queueStockAdjustment(payload);
+          await refreshPendingCount();
+          const qty = Number(adjustQty);
+          setProducts((prev) =>
+            prev.map((p) =>
+              p.id === adjustProduct.id
+                ? { ...p, stock: adjustType === "adjustment" ? qty : Math.max(0, p.stock - qty) }
+                : p
+            )
+          );
+          finishLocally(`Queued offline: ${adjustProduct.name} stock update will sync when back online.`);
+        } catch (queueErr) {
+          setAdjustError(queueErr instanceof Error ? queueErr.message : "Could not adjust stock.");
+        }
+      } else {
+        setAdjustError(err instanceof Error ? err.message : "Could not adjust stock.");
+      }
     } finally {
       setSavingAdjust(false);
     }
@@ -159,8 +286,61 @@ export default function InventoryPage() {
     });
   }, [products, search, filter]);
 
+  // Phase 5: categorize products by expiry status using the configurable
+  // warningDays period. Purely a client-side read of products.expiryDate —
+  // no separate expiry API needed.
+  const expiryGroups = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const warningMs = warningDays * 24 * 60 * 60 * 1000;
+
+    const expired: Product[] = [];
+    const expiringSoon: Product[] = [];
+    const noExpiry: Product[] = [];
+
+    for (const p of products) {
+      if (!p.expiryDate) {
+        noExpiry.push(p);
+        continue;
+      }
+      const exp = new Date(p.expiryDate);
+      if (Number.isNaN(exp.getTime())) {
+        noExpiry.push(p);
+        continue;
+      }
+      const diff = exp.getTime() - today.getTime();
+      if (diff < 0) {
+        expired.push(p);
+      } else if (diff <= warningMs) {
+        expiringSoon.push(p);
+      }
+    }
+
+    expired.sort((a, b) => new Date(a.expiryDate!).getTime() - new Date(b.expiryDate!).getTime());
+    expiringSoon.sort((a, b) => new Date(a.expiryDate!).getTime() - new Date(b.expiryDate!).getTime());
+
+    return { expired, expiringSoon, noExpiry };
+  }, [products, warningDays]);
+
+  async function updateWarningDays(days: number) {
+    setWarningDays(days);
+    setSavingWarningDays(true);
+    try {
+      await fetch("/api/settings/expiry", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ warningDays: days }),
+      });
+    } catch {
+      // Non-critical — the selection still applies locally for this session.
+    } finally {
+      setSavingWarningDays(false);
+    }
+  }
+
   return (
     <div className="animate-fadeIn space-y-5">
+      <OfflineBadge online={online} pending={pending} syncing={syncing} />
       <PageHeader
         title="Inventory"
         subtitle="Stock levels, valuation, adjustments and movement history"
@@ -244,6 +424,23 @@ export default function InventoryPage() {
           }`}
         >
           Supplier History
+        </button>
+        <button
+          onClick={() => setTab("expiry")}
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-1.5 ${
+            tab === "expiry" ? "gold-gradient text-dark-950" : "bg-dark-800 text-dark-300"
+          }`}
+        >
+          Expiry
+          {(expiryGroups.expired.length > 0 || expiryGroups.expiringSoon.length > 0) && (
+            <span
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+                tab === "expiry" ? "bg-dark-950/20 text-dark-950" : "bg-red-500/20 text-red-400"
+              }`}
+            >
+              {expiryGroups.expired.length + expiryGroups.expiringSoon.length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -383,7 +580,7 @@ export default function InventoryPage() {
           </div>
         </div>
         )
-      ) : (
+      ) : tab === "suppliers" ? (
         <div className="glass-card rounded-2xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-white flex items-center gap-2">
@@ -423,6 +620,97 @@ export default function InventoryPage() {
             </div>
           )}
         </div>
+      ) : (
+        <div className="space-y-5">
+          <div className="glass-card rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Expiry Management</h2>
+              <p className="text-xs text-dark-400 mt-0.5">
+                Products are flagged "Expiring Soon" once they fall inside the warning period below.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-dark-400 whitespace-nowrap">Warn me</span>
+              <select
+                value={warningDays}
+                onChange={(e) => updateWarningDays(Number(e.target.value))}
+                disabled={savingWarningDays}
+                className={selectClass}
+              >
+                <option value={7}>1 week before</option>
+                <option value={14}>2 weeks before</option>
+                <option value={30}>1 month before</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="glass-card rounded-2xl p-4 md:p-5">
+            <h3 className="text-sm font-semibold text-red-400 flex items-center gap-2 mb-3">
+              <PackageX className="w-4 h-4" /> Expired ({expiryGroups.expired.length})
+            </h3>
+            {expiryGroups.expired.length === 0 ? (
+              <p className="text-sm text-dark-500">No expired products.</p>
+            ) : (
+              <div className="divide-y divide-dark-800">
+                {expiryGroups.expired.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-white truncate">{p.name}</p>
+                      <p className="text-xs text-dark-400">Expired {p.expiryDate}</p>
+                    </div>
+                    <button
+                      onClick={() => {
+                        const found = products.find((prod) => prod.id === p.id);
+                        setAdjustType("out");
+                        setWastageReason("Expired");
+                        setAdjustProduct(found || null);
+                        setShowAdjust(true);
+                      }}
+                      className="px-3 py-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 text-xs font-medium rounded-lg flex-shrink-0"
+                    >
+                      Remove Stock
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="glass-card rounded-2xl p-4 md:p-5">
+            <h3 className="text-sm font-semibold text-orange-400 flex items-center gap-2 mb-3">
+              <AlertTriangle className="w-4 h-4" /> Expiring Soon ({expiryGroups.expiringSoon.length})
+            </h3>
+            {expiryGroups.expiringSoon.length === 0 ? (
+              <p className="text-sm text-dark-500">Nothing expiring within the warning period.</p>
+            ) : (
+              <div className="divide-y divide-dark-800">
+                {expiryGroups.expiringSoon.map((p) => (
+                  <div key={p.id} className="flex items-center justify-between gap-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-white truncate">{p.name}</p>
+                      <p className="text-xs text-dark-400">Expires {p.expiryDate}</p>
+                    </div>
+                    <Link
+                      href={`/products/edit?id=${p.id}`}
+                      className="px-3 py-1.5 bg-dark-800 hover:bg-dark-700 text-xs text-dark-200 rounded-lg flex-shrink-0"
+                    >
+                      View
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="glass-card rounded-2xl p-4 md:p-5">
+            <h3 className="text-sm font-semibold text-dark-300 flex items-center gap-2 mb-3">
+              <Package className="w-4 h-4" /> No Expiry Date ({expiryGroups.noExpiry.length})
+            </h3>
+            <p className="text-xs text-dark-500">
+              Products without an expiry date set. Add one from each product's edit page if applicable.
+            </p>
+          </div>
+        </div>
       )}
 
       {/* Adjust / Stock Out Modal */}
@@ -450,6 +738,46 @@ export default function InventoryPage() {
           </Field>
 
           <Field label="Select Product" required>
+            <div className="space-y-2 mb-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={productQuery}
+                  onChange={(e) => setProductQuery(e.target.value)}
+                  placeholder="Quick find by name or barcode..."
+                  className={inputClass}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowWastageScanner(true)}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-dark-800 text-dark-200 hover:bg-dark-700 text-sm font-medium whitespace-nowrap"
+                >
+                  <ScanLine className="w-4 h-4" /> Scan
+                </button>
+              </div>
+              {searchingProducts && (
+                <p className="text-xs text-dark-500">Searching…</p>
+              )}
+              {productMatches.length > 0 && (
+                <div className="rounded-xl border border-dark-700 divide-y divide-dark-800 overflow-hidden">
+                  {productMatches.map((p) => (
+                    <button
+                      type="button"
+                      key={p.id}
+                      onClick={() => {
+                        setAdjustProduct(p);
+                        setProductQuery("");
+                        setProductMatches([]);
+                      }}
+                      className="w-full text-left px-3 py-2 text-sm hover:bg-dark-800 flex items-center justify-between gap-2"
+                    >
+                      <span className="text-white">{p.name}</span>
+                      <span className="text-dark-400 text-xs flex-shrink-0">Stock: {p.stock}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <select
               value={adjustProduct?.id || ""}
               onChange={(e) => {
@@ -459,7 +787,7 @@ export default function InventoryPage() {
               className={selectClass}
               required
             >
-              <option value="">-- Choose item --</option>
+              <option value="">-- Or choose from full list --</option>
               {products.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name} (Current: {p.stock})
@@ -492,15 +820,51 @@ export default function InventoryPage() {
             />
           </Field>
 
-          <Field label="Reference / Reason">
-            <input
-              type="text"
-              value={adjustRef}
-              onChange={(e) => setAdjustRef(e.target.value)}
-              placeholder={adjustType === "out" ? "Damaged package #12" : "Quarterly Stocktake #3"}
-              className={inputClass}
-            />
-          </Field>
+          {adjustType === "out" &&
+            adjustProduct &&
+            Number(adjustQty) > adjustProduct.stock && (
+              <p className="text-xs text-orange-400">
+                Only {adjustProduct.stock} in stock — removing {adjustQty} will bring it to 0.
+              </p>
+            )}
+
+          {adjustType === "out" ? (
+            <Field label="Reason" required>
+              <select
+                value={wastageReason}
+                onChange={(e) => setWastageReason(e.target.value as typeof WASTAGE_REASONS[number])}
+                className={selectClass}
+              >
+                {WASTAGE_REASONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : (
+            <Field label="Reference / Reason">
+              <input
+                type="text"
+                value={adjustRef}
+                onChange={(e) => setAdjustRef(e.target.value)}
+                placeholder="Quarterly Stocktake #3"
+                className={inputClass}
+              />
+            </Field>
+          )}
+
+          {adjustType === "out" && wastageReason === "Other" && (
+            <Field label="Describe reason">
+              <input
+                type="text"
+                value={adjustRef}
+                onChange={(e) => setAdjustRef(e.target.value)}
+                placeholder="Describe the reason for removal"
+                className={inputClass}
+              />
+            </Field>
+          )}
 
           <Field label="Notes (Optional)">
             <textarea
@@ -530,6 +894,13 @@ export default function InventoryPage() {
           </div>
         </form>
       </Modal>
+
+      <BarcodeScanner
+        open={showWastageScanner}
+        onClose={() => setShowWastageScanner(false)}
+        onScan={handleWastageScan}
+        title="Scan Product to Remove"
+      />
     </div>
   );
 }

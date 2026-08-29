@@ -1,19 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Save, Building2, Receipt, Bell, Database, CheckCircle, Crown } from "lucide-react";
+import { useState, useEffect, useMemo } from "react";
+import { Save, Building2, Receipt, Bell, Database, CheckCircle, Crown, Users } from "lucide-react";
 import PageHeader from "@/components/ui/PageHeader";
 import Spinner from "@/components/ui/Spinner";
 import { Field, inputClass, textareaClass } from "@/components/ui/Field";
 import type { BusinessInfo } from "@/lib/queries";
+import StaffManagement from "@/components/settings/StaffManagement";
 
-type Tab = "business" | "receipt" | "notifications" | "data";
+type Tab = "business" | "receipt" | "notifications" | "data" | "staff";
 
-const tabs: { id: Tab; label: string; icon: typeof Building2 }[] = [
-  { id: "business", label: "Business", icon: Building2 },
-  { id: "receipt", label: "Receipt", icon: Receipt },
-  { id: "notifications", label: "Alerts", icon: Bell },
-  { id: "data", label: "Data", icon: Database },
+const ALL_TABS: { id: Tab; label: string; icon: typeof Building2; ownerOnly?: boolean }[] = [
+  { id: "business", label: "Business", icon: Building2, ownerOnly: true },
+  { id: "receipt", label: "Receipt", icon: Receipt, ownerOnly: true },
+  { id: "notifications", label: "Alerts", icon: Bell, ownerOnly: true },
+  { id: "data", label: "Data", icon: Database, ownerOnly: true },
+  { id: "staff", label: "Staff", icon: Users },
 ];
 
 export default function SettingsPage() {
@@ -22,8 +24,29 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [role, setRole] = useState<"owner" | "manager" | "cashier" | null>(null);
 
   const [alerts, setAlerts] = useState({ low: true, out: true, summary: true });
+
+  // Business/Receipt/Alerts/Data configuration stays owner-only, matching
+  // the existing route permission (canManageSettings). Managers only get
+  // the new Staff tab (read + performance), never the rest of Settings —
+  // opening /settings to managers for Staff Management must not also hand
+  // them business configuration they didn't have access to before.
+  const tabs = useMemo(
+    () => ALL_TABS.filter((t) => !t.ownerOnly || role === "owner"),
+    [role]
+  );
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : { user: null }))
+      .then((data) => {
+        setRole(data.user?.role ?? "cashier");
+        if (data.user?.role && data.user.role !== "owner") setTab("staff");
+      })
+      .catch(() => setRole("cashier"));
+  }, []);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -209,6 +232,8 @@ export default function SettingsPage() {
             ))}
           </div>
         )}
+
+        {tab === "staff" && <StaffManagement role={role} />}
 
         {(tab === "business" || tab === "receipt") && (
           <div className="mt-6 pt-5 border-t border-dark-800">

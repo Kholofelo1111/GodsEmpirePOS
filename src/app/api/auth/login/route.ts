@@ -18,6 +18,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Invalid username or password" }, { status: 401 });
     }
 
+    if (!user.isActive) {
+      return NextResponse.json({ error: "This account has been deactivated. Contact the owner." }, { status: 403 });
+    }
+
     const ok = await bcrypt.compare(password, user.password);
 
     if (!ok) {

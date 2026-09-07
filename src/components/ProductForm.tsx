@@ -164,7 +164,18 @@ export default function ProductForm({
       }
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save product");
+      // Product creation/editing isn't part of the offline-write
+      // architecture (unlike POS sales and stock adjustments, which queue
+      // locally — see src/lib/offline). A TypeError here means fetch()
+      // never reached the server at all (no connection), which is a
+      // materially different situation from the server rejecting the
+      // request — show a clear, honest message instead of surfacing the
+      // browser's raw network-error text (e.g. "Failed to fetch").
+      if (err instanceof TypeError) {
+        setError("You're offline. Creating or editing products requires an internet connection.");
+      } else {
+        setError(err instanceof Error ? err.message : "Could not save product");
+      }
       setSaving(false);
     }
   };

@@ -22,6 +22,7 @@ export default function SettingsPage() {
   const [tab, setTab] = useState<Tab>("business");
   const [form, setForm] = useState<BusinessInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [role, setRole] = useState<"owner" | "manager" | "cashier" | null>(null);
@@ -50,8 +51,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetch("/api/settings")
-      .then((r) => r.json())
+      .then((r) => (r.ok ? r.json() : Promise.reject()))
       .then(setForm)
+      .catch(() => setLoadFailed(true))
       .finally(() => setLoading(false));
   }, []);
 
@@ -73,7 +75,34 @@ export default function SettingsPage() {
     }
   };
 
-  if (loading || !form) return <Spinner label="Loading settings..." />;
+  if (loading) return <Spinner label="Loading settings..." />;
+
+  if (!form) {
+    return (
+      <div className="max-w-md mx-auto mt-12 text-center space-y-3">
+        <p className="text-white font-medium">Could not load settings</p>
+        <p className="text-dark-400 text-sm">
+          {loadFailed
+            ? "Check your connection and try again."
+            : "Something went wrong loading business settings."}
+        </p>
+        <button
+          onClick={() => {
+            setLoading(true);
+            setLoadFailed(false);
+            fetch("/api/settings")
+              .then((r) => (r.ok ? r.json() : Promise.reject()))
+              .then(setForm)
+              .catch(() => setLoadFailed(true))
+              .finally(() => setLoading(false));
+          }}
+          className="px-4 py-2 gold-gradient text-dark-950 font-semibold rounded-xl"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
 
   const update = (patch: Partial<BusinessInfo>) => setForm({ ...form, ...patch });
 

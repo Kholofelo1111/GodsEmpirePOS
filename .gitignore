@@ -8,11 +8,7 @@ out
 *.debug
 scanner.txt
 drizzle/
-drizzle.config.json.bak
 insert-lifebuoy.js
+.env
 .env.local
-tsconfig.tsbuildinfo
-drizzle.config.json
-*.before-auth
-*.original
-*.tempbackup
+.env*.local

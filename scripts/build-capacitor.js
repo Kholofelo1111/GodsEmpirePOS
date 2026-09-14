@@ -20,6 +20,7 @@ const middlewarePath = path.join(root, "src", "middleware.ts");
 const middlewareTmp = path.join(root, "src", "middleware.ts.export-build-tmp");
 const apiPath = path.join(root, "src", "app", "api");
 const apiTmp = path.join(root, "src", "app", "__api_export_build_tmp__");
+const outDir = path.join(root, "out");
 
 function moveAside() {
   if (fs.existsSync(middlewarePath)) fs.renameSync(middlewarePath, middlewareTmp);
@@ -33,6 +34,15 @@ function restore() {
 
 let failed = false;
 try {
+  // Force a clean export every time. Next.js normally clears `out/`
+  // itself, but this build already relies on temporarily moving files
+  // around (see moveAside/restore above) rather than trusting defaults,
+  // and a stale `out/` — left over from an interrupted build, or from
+  // before middleware/api exclusion was added — is exactly the kind of
+  // thing that can end up partially copied into the Android app by
+  // `npx cap sync android` alongside the new build's files.
+  if (fs.existsSync(outDir)) fs.rmSync(outDir, { recursive: true, force: true });
+
   moveAside();
   execSync("next build --webpack", {
     cwd: root,

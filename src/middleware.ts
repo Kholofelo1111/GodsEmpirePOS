@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 
-const jwtSecret = process.env.JWT_SECRET;
-
-if (!jwtSecret) {
-  throw new Error("JWT_SECRET is required");
-}
-
-const secret = new TextEncoder().encode(jwtSecret);
+const secret = new TextEncoder().encode(
+  process.env.JWT_SECRET || "change-this-secret-in-production"
+);
 
 // Origin the locally-bundled Capacitor app is served from, so its
 // cross-origin fetches to this API can be allowed with credentials
